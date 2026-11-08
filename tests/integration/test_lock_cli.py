@@ -766,8 +766,10 @@ def test_family_four_of_a_new_package_move_to_one_informational_line(
     _set_metadata_dependencies(registry, new={"left-pad": "^1.0.0"})
     client, old_lock, new_lock = _new_only_lockfiles(tmp_path, registry)
 
-    code, out, _ = _run(capsys, client, old_lock, new_lock)
-    json_code, json_out, _ = _run(capsys, client, old_lock, new_lock, "--json")
+    code, out, _ = _run(capsys, client, old_lock, new_lock, "--experimental")
+    json_code, json_out, _ = _run(
+        capsys, client, old_lock, new_lock, "--json", "--experimental"
+    )
     payload = json.loads(json_out)
 
     # The two family-4 findings are not meaningful as "changes" against an empty tree:
@@ -815,8 +817,10 @@ def test_a_changed_pair_still_shows_family_four_findings_in_its_score(
         tmp_path / "new.json", {node_modules("dep-pkg"): registry_entry(registry, NEW)}
     )
 
-    code, out, _ = _run(capsys, client, old_lock, new_lock)
-    json_code, json_out, _ = _run(capsys, client, old_lock, new_lock, "--json")
+    code, out, _ = _run(capsys, client, old_lock, new_lock, "--experimental")
+    json_code, json_out, _ = _run(
+        capsys, client, old_lock, new_lock, "--json", "--experimental"
+    )
     payload = json.loads(json_out)
 
     # A LOW finding is below the default --fail-on threshold, but it is still shown and scored.
@@ -826,6 +830,42 @@ def test_a_changed_pair_still_shows_family_four_findings_in_its_score(
     assert "metadata (informational)" not in out
     assert {item["rule_id"] for item in payload["pairs"][0]["findings"]} == {"DEPENDENCY_ADDED"}
     assert payload["pairs"][0]["score"] > 0
+
+
+def test_lock_skips_experimental_families_by_default(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    registry = package_registry(
+        tmp_path,
+        "dep-pkg",
+        old_version=OLD,
+        new_version=NEW,
+        old_files={
+            "package.json": b'{"name":"dep-pkg","version":"1.0.0"}',
+            "index.js": b"module.exports = 1;\n",
+        },
+        new_files={
+            "package.json": b'{"name":"dep-pkg","version":"1.1.0"}',
+            "index.js": b"module.exports = 1;\n",
+        },
+    )
+    _set_metadata_dependencies(
+        registry, old={"shared": "1.0.0"}, new={"shared": "1.0.0", "extra": "2.0.0"}
+    )
+    client = MultiRegistry([registry])
+    old_lock = write_lockfile(
+        tmp_path / "old.json", {node_modules("dep-pkg"): registry_entry(registry, OLD)}
+    )
+    new_lock = write_lockfile(
+        tmp_path / "new.json", {node_modules("dep-pkg"): registry_entry(registry, NEW)}
+    )
+
+    default_code, default_out, _ = _run(capsys, client, old_lock, new_lock)
+    _, enabled_out, _ = _run(capsys, client, old_lock, new_lock, "--experimental")
+
+    assert default_code == 0
+    assert "DEPENDENCY_ADDED" not in default_out
+    assert "DEPENDENCY_ADDED" in enabled_out
 
 
 def _installer_pair(tmp_path: Path) -> tuple[MultiRegistry, Path, Path]:
@@ -932,8 +972,10 @@ def test_config_fail_on_and_max_pairs_apply_unless_the_cli_overrides_them(
     low_config = _write_config(tmp_path, '[lock]\nfail_on = "low"\n')
 
     # DEPENDENCY_ADDED is LOW: the default (medium) exits 0, the config's low exits 1.
-    default_code, _, _ = _run(capsys, client, old_lock, new_lock)
-    config_code, _, _ = _run(capsys, client, old_lock, new_lock, "--config", str(low_config))
+    default_code, _, _ = _run(capsys, client, old_lock, new_lock, "--experimental")
+    config_code, _, _ = _run(
+        capsys, client, old_lock, new_lock, "--experimental", "--config", str(low_config)
+    )
     assert default_code == 0
     assert config_code == 1
 

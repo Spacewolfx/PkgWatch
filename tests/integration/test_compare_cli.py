@@ -159,6 +159,30 @@ def test_installer_pair_in_json_mode_has_the_same_four_findings_and_score_94(
     ]
 
 
+def test_sarif_output_has_the_four_findings_with_levels(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    registry = make_registry(tmp_path, INSTALLER)
+    code, out, err = _run(capsys, registry, "--sarif")
+    document = json.loads(out)
+
+    assert code == 1
+    assert err == ""
+    assert document["version"] == "2.1.0"
+    assert document["$schema"] == cli.SARIF_SCHEMA_URI
+    run = document["runs"][0]
+    assert run["tool"]["driver"]["name"] == "pkgwatch"
+    rule_ids = {item["ruleId"] for item in run["results"]}
+    assert rule_ids == set(FOUR_RULES)
+    levels = {item["ruleId"]: item["level"] for item in run["results"]}
+    assert levels["NPM_INSTALL_SCRIPT_ADDED"] == "error"
+    assert levels["ENV_ENUMERATION_ADDED"] == "note"
+    assert levels["DYNAMIC_EVAL_ADDED"] == "error"
+    assert run["properties"]["package"] == "demo-pkg"
+    assert run["properties"]["measured"] is False
+    assert all(item["locations"][0]["physicalLocation"]["region"]["startLine"] >= 1 for item in run["results"])
+
+
 def test_json_shape_is_stable(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     registry = make_registry(tmp_path, INSTALLER)
     code, out, _ = _run(capsys, registry, "--json")
@@ -571,7 +595,7 @@ def test_package_json_changes_report_added_removed_changed_and_repository(
         },
     )
 
-    code, out, _ = _run(capsys, registry, "--json")
+    code, out, _ = _run(capsys, registry, "--json", "--experimental")
     payload = json.loads(out)
     sections = payload["package_json_changes"]["sections"]
 
@@ -731,7 +755,7 @@ def test_family_three_and_four_findings_surface_likely_minified(
     document["versions"][NEW_VERSION]["dependencies"] = {"new-dep": "1.0.0"}
     registry.doc_override = json.dumps(document).encode("utf-8")
 
-    code, out, _ = _run(capsys, registry, "--json")
+    code, out, _ = _run(capsys, registry, "--json", "--experimental")
     payload = json.loads(out)
     by_id = {item["rule_id"]: item for item in payload["findings"]}
 
@@ -749,3 +773,29 @@ def test_family_three_and_four_findings_surface_likely_minified(
     assert len(blob_finding["evidence"]) <= 200
     assert by_id["REPOSITORY_URL_CHANGED"]["severity"] == "medium"
     assert by_id["DEPENDENCY_ADDED"]["severity"] == "low"
+
+
+def test_compare_skips_experimental_families_by_default(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    similar = make_registry(tmp_path, BENIGN)
+    alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    similar.set_new(
+        tarball_from_files(tmp_path, "obfuscated", {"dist/bundle.min.js": f'var d = "{alpha * 10}";\n'.encode()})
+    )
+    document = similar.document()
+    document["versions"][NEW_VERSION]["dependencies"] = {"new-dep": "1.0.0"}
+    similar.doc_override = json.dumps(document).encode("utf-8")
+
+    default_code, default_out, _ = _run(capsys, similar, "--json")
+    enabled_code, enabled_out, _ = _run(capsys, similar, "--json", "--experimental")
+
+    # The findings are LOW: below the default fail-on threshold, so both runs exit 0.
+    assert default_code == 0
+    assert "BASE64_BLOB_PRESENT" not in {
+        item["rule_id"] for item in json.loads(default_out)["findings"]
+    }
+    assert "BASE64_BLOB_PRESENT" in {
+        item["rule_id"] for item in json.loads(enabled_out)["findings"]
+    }
+    assert enabled_code == 0

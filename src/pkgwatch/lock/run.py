@@ -135,6 +135,7 @@ def run_lock(
     cache: DownloadCache | None = None,
     analyse_new: bool = True,
     baseline: Sequence[BaselineEntry] = (),
+    experimental: bool = False,
 ) -> LockRunResult:
     """Plan two lockfiles, then analyse every changed pair. Raises only for plan errors."""
     limits = (
@@ -162,6 +163,7 @@ def run_lock(
         ignored=ignored,
         cache=cache,
         baseline_keys=baseline_keys,
+        experimental=experimental,
     )
     # Unsupported new packages are already counted as unanalysed by the plan; only the
     # registry-backed ones are fetched.
@@ -179,6 +181,7 @@ def run_lock(
             ignored=ignored,
             cache=cache,
             baseline_keys=baseline_keys,
+            experimental=experimental,
         )
         if analyse_new
         else ()
@@ -222,6 +225,7 @@ def _analyse(
     ignored: Sequence[str],
     cache: DownloadCache | None,
     baseline_keys: frozenset[BaselineKey],
+    experimental: bool = False,
 ) -> tuple[PairAnalysis, ...]:
     if not changed:
         return ()
@@ -236,6 +240,7 @@ def _analyse(
                     ignored=ignored,
                     cache=cache,
                     baseline_keys=baseline_keys,
+                    experimental=experimental,
                 ),
                 changed,
             )
@@ -251,6 +256,7 @@ def _analyse_pair(
     ignored: Sequence[str],
     cache: DownloadCache | None,
     baseline_keys: frozenset[BaselineKey],
+    experimental: bool = False,
 ) -> PairAnalysis:
     ignored_set = frozenset(ignored)
     try:
@@ -282,7 +288,11 @@ def _analyse_pair(
             )
             try:
                 active, _metadata, result, ignored_counts, baselined_findings = _active_findings(
-                    ctx, ignored_set, config=config, baseline_keys=baseline_keys
+                    ctx,
+                    ignored_set,
+                    config=config,
+                    baseline_keys=baseline_keys,
+                    experimental=experimental,
                 )
             except _IncompleteAnalysis as exc:
                 return _failed(pair, ANALYSIS_INCOMPLETE, parse_problems=exc.parse_problems)
@@ -332,6 +342,7 @@ def _active_findings(
     config: Config,
     informational_families: frozenset[RuleFamily] = frozenset(),
     baseline_keys: frozenset[BaselineKey] = frozenset(),
+    experimental: bool = False,
 ) -> tuple[
     tuple[Finding, ...],
     tuple[tuple[str, int], ...],
@@ -360,7 +371,7 @@ def _active_findings(
             }
         )
 
-    findings = run_rules(ctx)
+    findings = run_rules(ctx, experimental=experimental)
     if analysis_incomplete(findings):
         raise _IncompleteAnalysis(tuple(sorted({error.kind.value for error in ctx.parse_errors})))
 
@@ -405,6 +416,7 @@ def _analyse_new_packages(
     ignored: Sequence[str],
     cache: DownloadCache | None,
     baseline_keys: frozenset[BaselineKey],
+    experimental: bool = False,
 ) -> tuple[NewPackageAnalysis, ...]:
     if not packages:
         return ()
@@ -419,6 +431,7 @@ def _analyse_new_packages(
                     ignored=ignored,
                     cache=cache,
                     baseline_keys=baseline_keys,
+                    experimental=experimental,
                 ),
                 packages,
             )
@@ -434,6 +447,7 @@ def _analyse_new_package(
     ignored: Sequence[str],
     cache: DownloadCache | None,
     baseline_keys: frozenset[BaselineKey],
+    experimental: bool = False,
 ) -> NewPackageAnalysis:
     ignored_set = frozenset(ignored)
     try:
@@ -468,6 +482,7 @@ def _analyse_new_package(
                         config=config,
                         informational_families=frozenset({RuleFamily.METADATA}),
                         baseline_keys=baseline_keys,
+                        experimental=experimental,
                     )
                 )
             except _IncompleteAnalysis as exc:

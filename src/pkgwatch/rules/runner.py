@@ -3,15 +3,23 @@
 Findings come out in registration order so a release re-analysed later yields the same
 bytes. A rule that raises, or that returns a finding under someone else's ``rule_id``,
 is replaced by an INFO record naming it; the run continues.
+
+Families 3 (obfuscation) and 4 (metadata) are **experimental**: they are disabled by
+default and run only when the caller opts in with ``experimental=True``.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
 
-from pkgwatch.models import DiffContext, Finding
+from pkgwatch.models import DiffContext, Finding, RuleFamily
 from pkgwatch.rules.guard import RULE_ENGINE_RULE_ID, engine_finding, guard
 from pkgwatch.rules.registry import DEFAULT, Registry, Rule
+
+# Experimental rule families are off by default (v0.3); enable them via --experimental.
+EXPERIMENTAL_FAMILIES: frozenset[RuleFamily] = frozenset(
+    {RuleFamily.OBFUSCATION, RuleFamily.METADATA}
+)
 
 
 class RuleContractViolation(Exception):
@@ -45,11 +53,22 @@ def _view_errors(ctx: DiffContext) -> Iterable[Finding]:
         )
 
 
-def run_rules(ctx: DiffContext, *, registry: Registry | None = None) -> list[Finding]:
-    """Run every rule registered for ``ctx.ecosystem`` and return the findings."""
+def run_rules(
+    ctx: DiffContext,
+    *,
+    registry: Registry | None = None,
+    experimental: bool = False,
+) -> list[Finding]:
+    """Run every rule registered for ``ctx.ecosystem`` and return the findings.
+
+    Rules whose families are all experimental are skipped unless
+    ``experimental=True``.
+    """
     active = registry if registry is not None else DEFAULT
     findings = list(_view_errors(ctx))
     for rule in active.select(ctx.ecosystem):
+        if not experimental and not EXPERIMENTAL_FAMILIES.isdisjoint(rule.families):
+            continue
         findings.extend(_run(rule, ctx))
     return findings
 

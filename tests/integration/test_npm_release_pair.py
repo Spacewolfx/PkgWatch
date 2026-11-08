@@ -59,7 +59,7 @@ def repo(tmp_path: Path) -> Iterator[Repository]:
 
 def test_benign_bump_stays_silent_and_scores_zero(tmp_path: Path) -> None:
     ctx = package_context(tmp_path, "npm_benign_bump")
-    findings = run_rules(ctx)
+    findings = run_rules(ctx, experimental=True)
     result = score(
         findings,
         scoring=ScoringConfig(),
@@ -77,7 +77,7 @@ def test_benign_bump_stays_silent_and_scores_zero(tmp_path: Path) -> None:
 
 def test_synthetic_installer_produces_exactly_four_findings(tmp_path: Path) -> None:
     ctx = package_context(tmp_path, "npm_synthetic_installer")
-    findings = run_rules(ctx)
+    findings = run_rules(ctx, experimental=True)
 
     assert [finding.rule_id for finding in findings] == [
         "NPM_INSTALL_SCRIPT_ADDED",
@@ -129,7 +129,7 @@ def test_synthetic_installer_produces_exactly_four_findings(tmp_path: Path) -> N
 
 def test_synthetic_installer_scores_ninety_four(tmp_path: Path) -> None:
     ctx = package_context(tmp_path, "npm_synthetic_installer")
-    findings = run_rules(ctx)
+    findings = run_rules(ctx, experimental=True)
     result = score(
         findings,
         scoring=ScoringConfig(),
@@ -156,7 +156,7 @@ def test_synthetic_installer_scores_ninety_four(tmp_path: Path) -> None:
 
 def test_scored_installer_is_stored_and_read_back(tmp_path: Path, repo: Repository) -> None:
     ctx = package_context(tmp_path, "npm_synthetic_installer")
-    findings = run_rules(ctx)
+    findings = run_rules(ctx, experimental=True)
     result = score(
         findings,
         scoring=ScoringConfig(),

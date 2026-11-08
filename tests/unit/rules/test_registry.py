@@ -112,13 +112,19 @@ def test_every_rule_ships_positive_and_negative_fixtures() -> None:
 @pytest.mark.parametrize("rule", list(RULES), ids=[rule.rule_id for rule in RULES])
 def test_positive_fixture_makes_the_rule_fire(rule: Rule, tmp_path: Path) -> None:
     ctx = rule_context(tmp_path, rule.rule_id, "positive")
-    assert rule.rule_id in {finding.rule_id for finding in run_rules(ctx)}
+    assert rule.rule_id in {
+        finding.rule_id
+        for finding in run_rules(ctx, experimental=True)
+    }
 
 
 @pytest.mark.parametrize("rule", list(RULES), ids=[rule.rule_id for rule in RULES])
 def test_negative_fixture_keeps_the_rule_quiet(rule: Rule, tmp_path: Path) -> None:
     ctx = rule_context(tmp_path, rule.rule_id, "negative")
-    assert rule.rule_id not in {finding.rule_id for finding in run_rules(ctx)}
+    assert rule.rule_id not in {
+        finding.rule_id
+        for finding in run_rules(ctx, experimental=True)
+    }
 
 
 def test_public_selector_returns_only_matching_ecosystem() -> None:

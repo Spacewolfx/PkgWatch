@@ -1,6 +1,6 @@
 # pkgwatch
 
-**One command: compare two exact versions of one npm package, statically.**
+**PkgWatch: static supply-chain diff for npm version updates. No code execution, offline, deterministic.**
 
 ```bash
 pkgwatch compare npm:<name>@<old> npm:<name>@<new> [--json] [--fail-on LEVEL]
@@ -18,12 +18,15 @@ pkgwatch compare npm:<name>@<old> npm:<name>@<new> [--json] [--fail-on LEVEL]
   integrity is absent. It reports which digest was used and stops on a mismatch.
 - Unpacks both tarballs **only** through `pkgwatch.sandbox`, builds a file-level diff with
   the registry metadata, runs the versioned rule families 1–4, and scores with `w1`.
+  Families 3 (obfuscation) and 4 (metadata) are **experimental**: off by default,
+  enabled by `--experimental`.
 - Reports, in text or JSON: both versions, file counts, every finding (grouped by
   severity), the score and boosts, changed files, `package.json` changes, registry
   metadata changes, ignored rules, and optional neutral `--explain` copy.
 - v0.2 adds rule families 3 (obfuscation signals) and 4 (metadata changes) for npm. Their
   severities and thresholds are **operator decisions, initial untuned values, not
-  measured** (SPEC §4.5.1 / §6.5.1).
+  measured** (SPEC §4.5.1 / §6.5.1), and both families are **experimental** (disabled
+  by default; enable with `--experimental`).
 
 ## What it does not do
 
@@ -93,10 +96,12 @@ Scoped names are accepted and percent-encoded (`@scope/pkg` becomes `@scope%2Fpk
 | Flag | Meaning |
 |---|---|
 | `--json` | emit the JSON report documented below |
+| `--sarif` | emit SARIF v2.1.0 JSON for GitHub/GitLab code scanning |
 | `--fail-on LEVEL` | `info`, `low`, `medium` (default), `high`, `critical` |
 | `--verbose` | show every changed file instead of the first 50 |
-| `--explain` | add neutral "Why it matters" / "Common benign causes" lines per fired rule |
+| `--explain` | add neutral "Why it matters" / "Common benign causes" lines per fired rule (experimental rules are marked) |
 | `--ignore RULE_ID` | repeatable; removes that rule from findings, score and exit code, and prints `ignored: RULE_ID (n findings)`; an unknown ID exits 2 |
+| `--experimental` | also run rule families 3 (obfuscation) and 4 (metadata); off by default |
 
 ### Recorded output
 
@@ -229,6 +234,8 @@ separate no-baseline section for brand-new packages.
 | `--old OLD_LOCK` | required; the lockfile before the update |
 | `--new NEW_LOCK` | required; the lockfile after the update |
 | `--json` | emit the lock JSON report (its own `schema_version`, currently 4) |
+| `--sarif` | emit SARIF v2.1.0 JSON for GitHub/GitLab code scanning |
+| `--experimental` | also run rule families 3 (obfuscation) and 4 (metadata); off by default |
 | `--markdown` | emit the report as Markdown (PR-comment sized, collapsible sections) instead of text |
 | `--fail-on LEVEL` | `info`, `low`, `medium` (default), `high`, `critical`; falls back to the config's `fail_on`, CLI wins |
 | `--max-pairs N` | override `[lock].max_pairs`; changed pairs plus analysed new packages count toward it; over the limit exits 2, never truncates |
@@ -419,6 +426,65 @@ Families 1–2 are unchanged from M2. v0.2 adds, for npm only:
 `MAINTAINER_ADDED` is **deferred**: package-level maintainers is a current-state snapshot,
 not a per-version value, so it cannot be diffed (SPEC §3 / §4.5.1). The synthetic installer
 pair still produces exactly the same four findings and score 94; the benign pair scores 0.
+
+Families 3 and 4 are **experimental**: they are disabled by default and their findings are
+marked `(experimental)` in `--explain` output; pass `--experimental` to enable them.
+Without the flag, neither family runs, so their findings are absent from reports and the
+score.
+
+## Case study
+
+### node-ipc@9.2.1 → node-ipc@9.2.2 (CVE-2022-21680, December 2021)
+
+On 2021-12-29, `node-ipc@9.2.2` was published with a malicious change: the package gained
+a brand-new runtime dependency, `peacetrain`, whose code — shipped inside the
+`peacetrain` tarball, not `node-ipc`'s — was a base64-encoded payload that overwrote
+system files with itself and then deleted the parent package at install time across
+Windows and Linux. It was pulled 6 hours after publishing; `9.2.2` was eventually
+removed from the registry.
+
+What PkgWatch would catch (from the public incident reports; this walkthrough is derived
+from them, it is not a recorded run):
+
+- With `--experimental`, `DEPENDENCY_ADDED` flags `peacetrain` as a newly declared
+  dependency — the full list of `versions[v].dependencies` is part of the SPEC §3
+  document the `compare` fetches, so this diff is visible even though the malicious
+  code is not in the diffed tarball.
+- The `package.json changes:` section lists removed/added `dependencies` in the new
+  manifest, and the file counts show the package's own content shrinking towards the
+  poisoned release.
+
+What it would miss:
+
+- The payload itself. It lived inside `peacetrain`, a package PkgWatch never downloads:
+  static analysis of `node-ipc`'s own tarball cannot see code that ships in a dependency.
+- The overwrite-and-self-destruct behaviour, which is runtime behaviour — no static
+  line-matching rule sees it.
+
+The lesson is already in this project's design: dependency metadata is family 4
+(experimental), and nothing PkgWatch reports claims to be a verdict about malicious
+behaviour — `measured: false` everywhere.
+
+## PyPI support (roadmap)
+
+PyPI is a roadmap, not a feature — npm is the only supported ecosystem today. The same
+shape would apply, and the engine is intentionally ecosystem-agnostic below the
+registry boundary:
+
+- **Same pipeline:** fetch one exact version document, download the archive, unpack it
+  only through the sandbox, build a file-level diff, run versioned rules, score.
+- **Archives:** PyPI ships sdist (`.tar.gz`) and wheels (`.whl`, zip) — the sandbox
+  already rejects traversal and absolute paths ahead of any reader, so both formats fit
+  the existing threat model; the archive reader is the new part.
+- **Versions:** PyPI needs PEP 440 ordering for pairing (SPEC §6.4 covers npm/crates
+  semver today; the PyPI half is the open TODO) and would reuse the same
+  `version.parse(ecosystem, text)` shape.
+- **"Install-time hooks":** setup scripts, `setup.py` setup-time behaviour and binary
+  wheels are the PyPI equivalents of npm lifecycle hooks — all readable statically,
+  never executed, exactly as today.
+- **Endpoints:** the registry endpoint for PyPI is not specified yet; nothing may be
+  invented without a SPEC §3 equivalent first. That is the first design step when this
+  is picked up.
 
 ## Open assumptions (TODO)
 

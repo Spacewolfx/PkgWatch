@@ -67,7 +67,11 @@ from pkgwatch.models import (
     Severity,
 )
 from pkgwatch.rules import RULES, explanations_for, families_by_rule_id, rule_set_version
-from pkgwatch.rules.runner import analysis_incomplete, run_rules
+from pkgwatch.rules.runner import (
+    EXPERIMENTAL_FAMILIES,
+    analysis_incomplete,
+    run_rules,
+)
 from pkgwatch.sandbox import ArchiveRejected, extract_archive
 from pkgwatch.score.engine import score
 
@@ -364,6 +368,11 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="RULE_ID",
         help="hide a rule from findings, score and the exit code (repeatable)",
     )
+    compare.add_argument(
+        "--experimental",
+        action="store_true",
+        help="also run experimental rule families 3 (obfuscation) and 4 (metadata); off by default",
+    )
 
     lock = sub.add_parser("lock", help="report what a package-lock.json update changes, statically")
     lock.add_argument("--old", required=True, metavar="OLD_LOCK", help="old package-lock.json")
@@ -445,6 +454,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="RULE_ID",
         help="hide a rule from findings, score and the exit code (repeatable)",
+    )
+    lock.add_argument(
+        "--experimental",
+        action="store_true",
+        help="also run experimental rule families 3 (obfuscation) and 4 (metadata); off by default",
     )
     lock.add_argument(
         "--no-cache",
@@ -620,6 +634,7 @@ def _cmd_compare(
             verbose=bool(args.verbose),
             explain=bool(args.explain) or sarif_mode,
             ignored=ignored,
+            experimental=bool(args.experimental),
         )
     except FetchError as exc:
         return _error(exc.code.value, structured_json)
@@ -748,6 +763,7 @@ def _cmd_lock(
             max_pairs=args.max_pairs,
             strict_skips=bool(args.strict_skips),
             no_new=bool(args.no_new),
+            experimental=bool(args.experimental),
             cache=cache,
             baseline=baseline_entries,
             ignored_reasons=reasons,
@@ -829,6 +845,7 @@ def _compare(
     verbose: bool,
     explain: bool,
     ignored: Sequence[str],
+    experimental: bool = False,
 ) -> tuple[CompareReport, int]:
     old_name, old_version = parse_spec(first)
     new_name, new_version = parse_spec(second)
@@ -873,7 +890,7 @@ def _compare(
                 }
             )
 
-        all_findings = run_rules(ctx)
+        all_findings = run_rules(ctx, experimental=experimental)
         if analysis_incomplete(all_findings):
             raise CompareError(
                 ANALYSIS_INCOMPLETE,
@@ -960,6 +977,7 @@ def _lock(
     ignored_reasons: Mapping[str, str] | None = None,
     update_baseline_path: Path | None = None,
     baseline_reason: str = "",
+    experimental: bool = False,
 ) -> tuple[LockReport, int]:
     result = run_lock(
         old_lock=Path(old_lock),
@@ -971,6 +989,7 @@ def _lock(
         cache=cache,
         analyse_new=not no_new,
         baseline=baseline,
+        experimental=experimental,
     )
     report = build_report(
         result,
@@ -1180,6 +1199,13 @@ def _one_line(text: str) -> str:
     )
 
 
+def _experimental_marker(rule_id: str, families: Mapping[str, frozenset[RuleFamily]]) -> str:
+    """Suffix for an experimental rule reference in explanations output."""
+    if not EXPERIMENTAL_FAMILIES.isdisjoint(families.get(rule_id, frozenset())):
+        return " (experimental)"
+    return ""
+
+
 def _md_escape(text: str) -> str:
     """Sanitize package-controlled strings for safe inclusion inside Markdown table cells."""
     clean = _one_line(text)
@@ -1257,8 +1283,9 @@ def _format_text(report: CompareReport) -> str:
 
     if report["explanations"]:
         lines.append("explanations:")
+        families = families_by_rule_id()
         for rule_id, copy in report["explanations"].items():
-            lines.append(f"  {rule_id}:")
+            lines.append(f"  {rule_id}{_experimental_marker(rule_id, families)}:")
             lines.append(f"    Why it matters: {copy['why_it_matters']}")
             lines.append(f"    Common benign causes: {copy['common_benign_causes']}")
     return "\n".join(lines)
@@ -1306,9 +1333,11 @@ def _format_compare_markdown(report: CompareReport) -> str:
         lines.append("\n_No findings reported._")
 
     if report["explanations"]:
+        families = families_by_rule_id()
         lines.extend(["", "### Rule Explanations"])
         for rule_id, copy in report["explanations"].items():
-            lines.append(f"- **`{_md_escape(rule_id)}`**")
+            marker = _experimental_marker(rule_id, families)
+            lines.append(f"- **`{_md_escape(rule_id)}`**{_md_escape(marker)}")
             lines.append(f"  - *Why it matters:* {_one_line(copy['why_it_matters'])}")
             lines.append(f"  - *Common benign causes:* {_one_line(copy['common_benign_causes'])}")
 

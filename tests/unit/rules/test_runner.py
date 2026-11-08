@@ -145,6 +145,35 @@ def test_run_rules_is_deterministic(tmp_path: Path) -> None:
     assert [f.model_dump() for f in run_rules(first)] == [f.model_dump() for f in run_rules(second)]
 
 
+def test_experimental_families_are_skipped_by_default(tmp_path: Path) -> None:
+    context = ctx_from_files(tmp_path, *TWO_FILES)
+    registry = _registry(
+        _rule(
+            "OBFUSCATION_RULE",
+            lambda inner: [_finding(inner, "OBFUSCATION_RULE", "package/a.js", "hit")],
+            families=(RuleFamily.OBFUSCATION,),
+        ),
+        _rule(
+            "METADATA_RULE",
+            lambda inner: [_finding(inner, "METADATA_RULE", None, "hit")],
+            families=(RuleFamily.METADATA,),
+        ),
+        _rule(
+            "CAPABILITY_RULE",
+            lambda inner: [_finding(inner, "CAPABILITY_RULE", "package/a.js", "hit")],
+        ),
+    )
+
+    default_ids = {finding.rule_id for finding in run_rules(context, registry=registry)}
+    assert default_ids == {"CAPABILITY_RULE"}
+
+    enabled_ids = {
+        finding.rule_id
+        for finding in run_rules(context, registry=registry, experimental=True)
+    }
+    assert enabled_ids == {"CAPABILITY_RULE", "OBFUSCATION_RULE", "METADATA_RULE"}
+
+
 def test_run_rules_emits_in_registration_order(tmp_path: Path) -> None:
     context = ctx_from_files(tmp_path, *TWO_FILES)
 

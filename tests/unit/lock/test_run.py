@@ -244,7 +244,13 @@ def test_family_four_of_a_new_package_is_informational_not_scored(tmp_path: Path
         tmp_path / "new.json", {node_modules("meta-pkg"): registry_entry(registry, NEW)}
     )
 
-    result = run_lock(old_lock=old_lock, new_lock=new_lock, config=Config(), client=client)
+    result = run_lock(
+        old_lock=old_lock,
+        new_lock=new_lock,
+        config=Config(),
+        client=client,
+        experimental=True,
+    )
 
     (analysis,) = result.new_analyses
     assert analysis.error is None
@@ -275,7 +281,13 @@ def test_family_three_of_a_new_package_stays_a_finding(tmp_path: Path) -> None:
         tmp_path / "new.json", {node_modules("blob-pkg"): registry_entry(registry, NEW)}
     )
 
-    result = run_lock(old_lock=old_lock, new_lock=new_lock, config=Config(), client=client)
+    result = run_lock(
+        old_lock=old_lock,
+        new_lock=new_lock,
+        config=Config(),
+        client=client,
+        experimental=True,
+    )
 
     (analysis,) = result.new_analyses
     assert analysis.error is None
@@ -309,7 +321,13 @@ def test_a_changed_pair_keeps_family_four_findings_scored(tmp_path: Path) -> Non
         tmp_path / "new.json", {node_modules("dep-pkg"): registry_entry(registry, NEW)}
     )
 
-    result = run_lock(old_lock=old_lock, new_lock=new_lock, config=Config(), client=client)
+    result = run_lock(
+        old_lock=old_lock,
+        new_lock=new_lock,
+        config=Config(),
+        client=client,
+        experimental=True,
+    )
 
     (pair,) = result.pairs
     assert pair.error is None

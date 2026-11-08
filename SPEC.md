@@ -196,6 +196,9 @@ a capability that already existed elsewhere in the package is not new. Family 3 
 **Operator decision, initial untuned values, not measured (2026-11-07).** The IDs in the
 §4.5 table are normative for these five rules. `rule_version = 1` for all of them. They are
 npm-only, pure `DiffContext -> list[Finding]` functions, and follow §4.1/§4.4 unchanged.
+Both families are **experimental**: they are disabled by default and run only with
+`--experimental` (v0.3); experimental findings are marked `(experimental)` in `--explain`
+output. Their severities and thresholds stay untuned operator decisions, not measured.
 
 | `rule_id` | family | severity | base (§5) | reads |
 |---|---|---|---|---|

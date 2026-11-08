@@ -1,0 +1,6 @@
+{
+  "name": "demo-pkg",
+  "scripts": {
+    "test": "echo run tests"
+  }
+}

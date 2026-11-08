@@ -1,0 +1,86 @@
+# pkgwatch lock — GitHub Action (composite)
+#
+# STATUS: untested on GitHub. This action has never run on a real runner; treat it as
+# documentation for the intended wiring and pin everything before real use.
+#
+# Trust model (SPEC §9.1 / docs/ci.md): the tool and this action come from the pinned
+# pkgwatch ref, never from the PR head. The old lockfile, config and baseline come from
+# the BASE branch (checked out into .base/); only the new lockfile comes from the PR.
+#
+# TODO(publishing): no PyPI package is published yet (MIT licence chosen, see LICENSE).
+# pkgwatch is installed from this action's own checkout (GITHUB_ACTION_PATH). To
+# publish: publish to an index, and pin the SHAs below.
+
+name: "pkgwatch lock"
+
+description: >-
+  Report what a package-lock.json update changes at install time and in code. Untested on GitHub.
+
+inputs:
+  old-lockfile:
+    description: "Lockfile path in the repository; read from the base branch."
+    default: "package-lock.json"
+  new-lockfile:
+    description: "Lockfile path in the repository; read from the PR head (workspace root)."
+    default: "package-lock.json"
+  config:
+    description: "Config path to read from the base branch. Empty means no --config."
+    default: ""
+  baseline:
+    description: "Baseline path to read from the base branch. Empty means no --baseline."
+    default: ""
+  fail-on:
+    description: "Lowest severity that fails the check (passed to --fail-on)."
+    default: "medium"
+  comment:
+    description: "Set to 'true' to post the report as a PR comment. Requires pull-requests: write."
+    default: "false"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout the base branch (trusted)
+      # TODO: pin actions/checkout by full commit SHA before use; never invent a hash.
+      uses: actions/checkout@TODO
+      with:
+        ref: ${{ github.base_ref }}
+        path: .base
+        persist-credentials: false
+
+    - name: Install pkgwatch from this action's checkout
+      shell: bash
+      run: |
+        python -m pip install "$GITHUB_ACTION_PATH"
+
+    - name: Run pkgwatch lock and append the report to the job summary
+      shell: bash
+      run: |
+        args=(lock
+          --old ".base/${{ inputs.old-lockfile }}"
+          --new "${{ inputs.new-lockfile }}"
+          --markdown
+          --fail-on "${{ inputs.fail-on }}"
+          --no-cache
+        )
+        # Config and baseline are only ever read from the base checkout, and only when
+        # they already exist there: a PR must not be able to silence its own findings.
+        if [[ -n "${{ inputs.config }}" && -f ".base/${{ inputs.config }}" ]]; then
+          args+=(--config ".base/${{ inputs.config }}")
+        fi
+        if [[ -n "${{ inputs.baseline }}" && -f ".base/${{ inputs.baseline }}" ]]; then
+          args+=(--baseline ".base/${{ inputs.baseline }}")
+        fi
+        exit_code=0
+        python -m pkgwatch "${args[@]}" > report.md || exit_code=$?
+        cat report.md >> "$GITHUB_STEP_SUMMARY"
+        exit "$exit_code"
+
+    - name: Post the report as a PR comment (opt-in)
+      if: ${{ always() && inputs.comment == 'true' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        gh pr comment "${{ github.event.pull_request.number }}" \
+          --repo "${{ github.repository }}" \
+          --body-file report.md

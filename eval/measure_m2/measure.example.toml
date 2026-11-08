@@ -1,0 +1,22 @@
+# Template for `measure.py --config`. Every key can also be passed on the command line; a flag
+# wins over the file. Copy this file, edit the two paths, and pass it with --config.
+#
+# Paths are used exactly as written, so a relative path resolves against the working directory
+# the script is started from (pkgwatch/), not against this file.
+
+# Required. A local clone of https://github.com/ossf/malicious-packages; only its npm OSV
+# entries are read, and its commit and LICENSE are recorded in run.json. The harness does not
+# fetch advisories.
+ossf_dir = "../../malicious-packages"
+
+# Required. A committed name list with `# source:` and `# retrieved:` headers; see
+# benign_list.example.txt. The harness never fetches a popularity list.
+benign_list = "eval/measure_m2/benign_list.txt"
+
+# Sampling. Same defaults as the flags, written out so a rerun is explicit about them.
+seed = 1234
+max_pairs = 200
+
+# Politeness and reproducibility knobs.
+sleep = 0.2
+keep_extracted = false

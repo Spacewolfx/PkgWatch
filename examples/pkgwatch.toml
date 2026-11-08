@@ -1,0 +1,4 @@
+[lock]
+fail_on = "medium"
+max_pairs = 300
+ignored = [{ rule = "DEPENDENCY_ADDED", reason = "smoke: review later" }]

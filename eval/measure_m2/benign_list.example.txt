@@ -1,0 +1,10 @@
+# Template for --benign-list. Copy it, fill in the two header lines and the names, and commit the
+# result next to this file. This example is deliberately not runnable: with no names below the
+# header the harness stops with a TODO instead of measuring an empty benign set.
+#
+# source: <where this list came from, e.g. "npm download counts, top N, exported by <owner>">
+# retrieved: <YYYY-MM-DD, the date the list was taken, not the date it was committed>
+#
+# One npm package name per line. Blank lines and other comments are ignored. Scoped names
+# (@scope/name) are allowed. Do not list any package that appears in the advisory corpus; names
+# that do are dropped from the benign pools and counted as EXCLUDED_OVERLAP_WITH_MALICIOUS.

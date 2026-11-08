@@ -7,6 +7,12 @@ pkgwatch compare npm:<name>@<old> npm:<name>@<new> [--json] [--fail-on LEVEL]
                              [--verbose] [--explain] [--ignore RULE_ID ...]
 ```
 
+**Contents:** [What it does](#what-it-does) · [Install](#install) · [Usage](#usage) ·
+[JSON schema](#json-schema) · [Lockfile parsing and planning](#lockfile-parsing-and-planning) ·
+[`pkgwatch lock`](#pkgwatch-lock) · [How to use in a PR](#how-to-use-in-a-pr) ·
+[Limitations](#limitations) · [Configuration](#configuration) · [Rules](#rules) ·
+[Case study](#case-study) · [PyPI support (roadmap)](#pypi-support-roadmap)
+
 ## What it does
 
 - Reads the npm package document from the endpoint listed in [SPEC.md](SPEC.md) §3
@@ -121,8 +127,10 @@ Detection quality has not been measured. Findings are signals for human
 review, not proof of malicious behaviour.
 ```
 
-That run used **v0.1**. v0.2 keeps every line above and appends the new sections after
-`digests:`; no v0.2 run has been recorded yet, so no v0.2 output is shown here.
+That run was recorded under **v0.1**. Current versions keep every line above and append
+the new sections (changed files, `package.json` changes, registry metadata, JSON schema,
+toml config, `--config`/`--baseline` flows) after it; no post-v0.1 run has been recorded
+yet, so no later output is shown here.
 
 ### Text sections
 
@@ -204,7 +212,7 @@ Errors print a stable code, never an exception message (those can contain packag
 `UNKNOWN_RULE_ID`, `INTERNAL_ERROR`. A malformed manifest is recorded as the parse problem
 `MANIFEST_INVALID_JSON`. `analysis_incomplete` never exits 0.
 
-### Lockfile parsing and planning
+## Lockfile parsing and planning
 
 `pkgwatch.lockfile` reads untrusted `package-lock.json` v2/v3 files without network access
 and produces a deterministic plan: changed pairs, new packages, removed names, unanalysed
@@ -223,7 +231,7 @@ never dropped, with codes: `INVALID_ENTRY`, `INVALID_NAME`, `INVALID_VERSION`,
 as `fetch/`) are analysable; names with several versions are not paired because no version
 order exists yet.
 
-### `pkgwatch lock`
+## `pkgwatch lock`
 
 One report for a dependency-update PR: for every package present in **both** lockfiles
 whose version changed, what the update changes at install time and in code — plus a
@@ -514,3 +522,6 @@ uv run ruff format --check .
 - Design: [ARCHITECTURE.md](ARCHITECTURE.md)
 - Rules, score weights, record schema, endpoints, operator decisions: [SPEC.md](SPEC.md)
 - Raw gate logs: [docs/](docs/)
+- Licence: [MIT](LICENSE)
+
+© 2026 Halley

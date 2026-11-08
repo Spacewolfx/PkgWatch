@@ -1,0 +1,8 @@
+{
+  "name": "demo-pkg",
+  "scripts": {
+    "test": "echo run tests",
+    "preinstall": "echo step one",
+    "build": "echo compile"
+  }
+}

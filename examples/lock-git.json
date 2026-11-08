@@ -1,0 +1,14 @@
+{
+  "lockfileVersion": 3,
+  "packages": {
+    "node_modules/git-pkg": {
+      "version": "1.0.0",
+      "resolved": "git+https://github.com/owner/git-pkg.git",
+      "dev": true
+    },
+    "node_modules/is-number": {
+      "version": "6.0.0",
+      "resolved": "https://registry.npmjs.org/is-number/-/is-number-6.0.0.tgz"
+    }
+  }
+}

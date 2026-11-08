@@ -1,0 +1,36 @@
+# Example workflow: run pkgwatch lock on dependency-update PRs.
+#
+# Copy to .github/workflows/lock.yml in your repository, pin every SHA below by full
+# commit hash (never invent one), and replace <owner>/pkgwatch with the published
+# action reference. This file is the documentation, not an active workflow.
+name: pkgwatch lock
+
+on:
+  pull_request:
+    paths:
+      - "package-lock.json"
+
+# Read-only: nothing in this workflow may write to the repository.
+permissions:
+  contents: read
+
+jobs:
+  lock:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the PR head (only the new lockfile is read from here)
+        uses: actions/checkout@TODO
+        with:
+          persist-credentials: false
+
+      - name: pkgwatch lock
+        # TODO: pin by full commit SHA. The old lockfile, config and baseline are read
+        # from the base branch by the action; only the new lockfile is from the PR.
+        uses: <owner>/pkgwatch@TODO
+        with:
+          old-lockfile: package-lock.json
+          new-lockfile: package-lock.json
+          config: pkgwatch.toml
+          baseline: baseline.json
+          fail-on: medium
+          # Opt-in PR comment: needs `pull-requests: write` on this job.

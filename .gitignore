@@ -7,3 +7,6 @@ dist/
 .mypy_cache/
 .ruff_cache/
 .hypothesis/
+# Local-only AI process artifacts: kept on disk, never published.
+özet.md
+docs/GATES-*.txt

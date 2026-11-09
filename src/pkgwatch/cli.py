@@ -254,6 +254,7 @@ class CompareReport(TypedDict):
     ignored_rules: list[IgnoredRuleOut]
     rule_set_version: str
     measured: bool
+    warnings: list[str]
     disclaimer: str
 
 
@@ -690,6 +691,9 @@ def _cmd_compare(
     ):
         return _error(OUTPUT_WRITE_FAILED, structured_json)
 
+    for warning in report["warnings"]:
+        print(f"warning: {_one_line(warning)}", file=sys.stderr)
+
     return exit_code
 
 
@@ -1119,13 +1123,14 @@ def _report(
     explanations: Mapping[str, tuple[str, str]],
     ignored_rules: list[IgnoredRuleOut],
 ) -> CompareReport:
+    counts = _counts(changes)
     report = CompareReport(
         schema_version=COMPARE_JSON_SCHEMA_VERSION,
         ecosystem=ecosystem.value,
         package=name,
         old_version=old_version,
         new_version=new_version,
-        files=_counts(changes),
+        files=counts,
         findings=[
             FindingOut(
                 rule_id=item.rule_id,
@@ -1149,6 +1154,7 @@ def _report(
         ignored_rules=ignored_rules,
         rule_set_version=result.rule_set_version,
         measured=False,
+        warnings=_noop_warnings(counts),
         disclaimer=DISCLAIMER,
     )
     if ecosystem is Ecosystem.PYPI:
@@ -1157,6 +1163,23 @@ def _report(
         report["package_json_changes"] = _package_json_changes(manifest_changes)
         report["registry_metadata_changes"] = _registry_metadata_changes(pair)
     return report
+
+
+def _noop_warnings(files: FileCounts) -> list[str]:
+    """Warn when a same-package diff looks like a silent no-op.
+
+    Zero modified files alongside adds and removes is the signature of two trees that
+    never aligned (e.g. a versioned sdist root that was not stripped), which once
+    reported a real version bump as all-added/all-removed. Surfacing it beats a clean
+    score that means nothing.
+    """
+    if files["modified"] == 0 and files["added"] > 0 and files["removed"] > 0:
+        return [
+            f"{files['added']} files added and {files['removed']} removed but none "
+            "modified for the same package; the two trees may not have aligned "
+            "(possible silent no-op diff)"
+        ]
+    return []
 
 
 def _counts(changes: Sequence[FileChange]) -> FileCounts:

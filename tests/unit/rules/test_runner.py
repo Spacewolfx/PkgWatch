@@ -168,8 +168,7 @@ def test_experimental_families_are_skipped_by_default(tmp_path: Path) -> None:
     assert default_ids == {"CAPABILITY_RULE"}
 
     enabled_ids = {
-        finding.rule_id
-        for finding in run_rules(context, registry=registry, experimental=True)
+        finding.rule_id for finding in run_rules(context, registry=registry, experimental=True)
     }
     assert enabled_ids == {"CAPABILITY_RULE", "OBFUSCATION_RULE", "METADATA_RULE"}
 

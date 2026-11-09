@@ -180,7 +180,10 @@ def test_sarif_output_has_the_four_findings_with_levels(
     assert levels["DYNAMIC_EVAL_ADDED"] == "error"
     assert run["properties"]["package"] == "demo-pkg"
     assert run["properties"]["measured"] is False
-    assert all(item["locations"][0]["physicalLocation"]["region"]["startLine"] >= 1 for item in run["results"])
+    assert all(
+        item["locations"][0]["physicalLocation"]["region"]["startLine"] >= 1
+        for item in run["results"]
+    )
 
 
 def test_json_shape_is_stable(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -781,7 +784,9 @@ def test_compare_skips_experimental_families_by_default(
     similar = make_registry(tmp_path, BENIGN)
     alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
     similar.set_new(
-        tarball_from_files(tmp_path, "obfuscated", {"dist/bundle.min.js": f'var d = "{alpha * 10}";\n'.encode()})
+        tarball_from_files(
+            tmp_path, "obfuscated", {"dist/bundle.min.js": f'var d = "{alpha * 10}";\n'.encode()}
+        )
     )
     document = similar.document()
     document["versions"][NEW_VERSION]["dependencies"] = {"new-dep": "1.0.0"}

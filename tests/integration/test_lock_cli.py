@@ -767,9 +767,7 @@ def test_family_four_of_a_new_package_move_to_one_informational_line(
     client, old_lock, new_lock = _new_only_lockfiles(tmp_path, registry)
 
     code, out, _ = _run(capsys, client, old_lock, new_lock, "--experimental")
-    json_code, json_out, _ = _run(
-        capsys, client, old_lock, new_lock, "--json", "--experimental"
-    )
+    json_code, json_out, _ = _run(capsys, client, old_lock, new_lock, "--json", "--experimental")
     payload = json.loads(json_out)
 
     # The two family-4 findings are not meaningful as "changes" against an empty tree:
@@ -818,9 +816,7 @@ def test_a_changed_pair_still_shows_family_four_findings_in_its_score(
     )
 
     code, out, _ = _run(capsys, client, old_lock, new_lock, "--experimental")
-    json_code, json_out, _ = _run(
-        capsys, client, old_lock, new_lock, "--json", "--experimental"
-    )
+    json_code, json_out, _ = _run(capsys, client, old_lock, new_lock, "--json", "--experimental")
     payload = json.loads(json_out)
 
     # A LOW finding is below the default --fail-on threshold, but it is still shown and scored.

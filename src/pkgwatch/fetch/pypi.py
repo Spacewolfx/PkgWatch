@@ -20,6 +20,7 @@ import posixpath
 import re
 import urllib.parse
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -40,7 +41,18 @@ from pkgwatch.version import UnsupportedVersion
 from pkgwatch.version import parse as parse_version
 
 PYPI_DOC_URL_TEMPLATE = "https://pypi.org/pypi/{name}/json"
+PYPI_VERSION_DOC_URL_TEMPLATE = "https://pypi.org/pypi/{name}/{version}/json"
 PYPI_ALLOWED_HOSTS = frozenset({"pypi.org", "files.pythonhosted.org"})
+
+# Info fields of a per-version document that pypi_metadata_changes diffs (SPEC §9.2).
+_METADATA_INFO_FIELDS = (
+    "requires_dist",
+    "requires_python",
+    "classifiers",
+    "project_urls",
+    "entry_points",
+    "summary",
+)
 
 _SPEC_PREFIX = "pypi:"
 MAX_NAME_LENGTH = 214
@@ -98,6 +110,13 @@ def build_doc_url(name: str) -> str:
     """
     validate_name_pypi(name)
     return PYPI_DOC_URL_TEMPLATE.format(name=normalize_name(name))
+
+
+def build_version_doc_url(name: str, version: str) -> str:
+    """The per-version document: PEP 503 name, the exact validated version string."""
+    validate_name_pypi(name)
+    validate_version_pypi(version)
+    return PYPI_VERSION_DOC_URL_TEMPLATE.format(name=normalize_name(name), version=version)
 
 
 def is_pypi_url(url: str) -> bool:
@@ -174,6 +193,8 @@ def fetch_pair_pypi(
         workdir=workdir,
         cache=cache,
     )
+    old = replace(old, metadata=_version_metadata(client, name, old_version, config))
+    new = replace(new, metadata=_version_metadata(client, name, new_version, config))
     return FetchPair(name=name, old=old, new=new)
 
 
@@ -224,6 +245,46 @@ def _document_releases(client: HttpClient, name: str, config: Config) -> Mapping
         if isinstance(declared, str) and normalize_name(declared) != normalize_name(name):
             raise FetchError(FetchErrorCode.REGISTRY_DOC_INVALID)
     return cast(Mapping[str, Any], releases)
+
+
+def _version_metadata(
+    client: HttpClient, name: str, version: str, config: Config
+) -> dict[str, Any]:
+    """Metadata fields of one exact version, or ``{}`` when unavailable.
+
+    A version document that cannot be fetched or parsed degrades to ``{}`` (every
+    ``pypi_metadata_changes`` field reads as absent) rather than failing the compare,
+    so metadata is best-effort and an offline run still analyses the artifacts.
+    """
+    try:
+        body = _fetch_bytes(
+            client,
+            build_version_doc_url(name, version),
+            cap=config.fetch.max_metadata_bytes,
+            config=config,
+        )
+    except FetchError:
+        return {}
+    try:
+        parsed = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    metadata: dict[str, Any] = {}
+    info = parsed.get("info")
+    if isinstance(info, dict):
+        for field in _METADATA_INFO_FIELDS:
+            if field in info:
+                metadata[field] = info[field]
+    urls = parsed.get("urls")
+    if isinstance(urls, list):
+        reported = [
+            entry.get("yanked") for entry in urls if isinstance(entry, dict) and "yanked" in entry
+        ]
+        if reported:
+            metadata["yanked"] = any(value is True for value in reported)
+    return metadata
 
 
 def _select_file(files: Sequence[Any]) -> Mapping[str, Any]:

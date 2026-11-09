@@ -293,7 +293,7 @@ def test_malformed_document_is_registry_doc_invalid(tmp_path: Path) -> None:
     assert caught.value.code is FetchErrorCode.REGISTRY_DOC_INVALID
 
 
-def test_only_the_document_endpoint_is_on_pypi_org(tmp_path: Path) -> None:
+def test_document_endpoints_are_on_pypi_org_artifacts_on_files_host(tmp_path: Path) -> None:
     registry = pypi_pair_registry(
         tmp_path,
         "demo",
@@ -305,7 +305,47 @@ def test_only_the_document_endpoint_is_on_pypi_org(tmp_path: Path) -> None:
 
     _fetch(tmp_path, registry)
 
+    # The project doc and both per-version docs are on pypi.org; only the two
+    # artifacts are on files.pythonhosted.org.
     assert registry.requests[0] == "https://pypi.org/pypi/demo/json"
+    artifacts = [r for r in registry.requests if r.startswith("https://files.pythonhosted.org/")]
+    assert len(artifacts) == 2
     assert all(
-        request.startswith("https://files.pythonhosted.org/") for request in registry.requests[1:]
+        r.startswith("https://pypi.org/") or r.startswith("https://files.pythonhosted.org/")
+        for r in registry.requests
     )
+
+
+def test_build_version_doc_url_normalizes_the_name(tmp_path: Path) -> None:
+    from pkgwatch.fetch.pypi import build_version_doc_url
+
+    assert build_version_doc_url("Foo_Bar", "1.0") == "https://pypi.org/pypi/foo-bar/1.0/json"
+
+
+def test_version_metadata_is_extracted_from_the_per_version_document(tmp_path: Path) -> None:
+    registry = pypi_pair_registry(
+        tmp_path,
+        "demo",
+        old_version="1.0.0",
+        new_version="1.1.0",
+        old_files={},
+        new_files={},
+        new_requires=("requests>=2.0",),
+    )
+
+    pair = _fetch(tmp_path, registry)
+
+    assert pair.new.metadata["requires_dist"] == ["requests>=2.0"]
+    assert "requires_dist" not in pair.old.metadata
+
+
+def test_version_metadata_degrades_to_empty_when_unavailable(tmp_path: Path) -> None:
+    """A version document that cannot be fetched yields {} (offline), never an error."""
+    from pkgwatch.fetch.npm import HttpResponse
+    from pkgwatch.fetch.pypi import _version_metadata
+
+    class Offline:
+        def get(self, url: str, **kwargs: object) -> HttpResponse:
+            return HttpResponse(status=404, headers={}, body=b"")
+
+    assert _version_metadata(Offline(), "demo", "1.0.0", CONFIG) == {}

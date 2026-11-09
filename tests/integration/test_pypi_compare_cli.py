@@ -102,7 +102,8 @@ def test_every_request_stays_on_the_pypi_host_allowlist(
     code, _, _ = _run(capsys, registry)
 
     assert code == 0
-    assert len(registry.requests) == 3  # document + old artifact + new artifact
+    # project document + old artifact + new artifact + two per-version documents
+    assert len(registry.requests) == 5
     assert all(url.startswith(ALLOWED_PREFIXES) for url in registry.requests)
     assert registry.requests[0] == f"https://{PYPI_HOST}/pypi/demo-pkg/json"
 
@@ -444,3 +445,16 @@ def test_explain_marks_the_dependency_rule_as_experimental(
     assert "PYPI_DEPENDENCY_ADDED (experimental):" in out
     assert "PYPI_INSTALL_HOOK_ADDED:" in out
     assert "PYPI_INSTALL_HOOK_ADDED (experimental)" not in out
+
+
+def test_pypi_metadata_changes_diff_requires_dist(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The per-version registry document feeds pypi_metadata_changes (item 3)."""
+    registry = _installer_registry(tmp_path)  # new version declares requests>=2.0
+    code, out, _err = _run(capsys, registry, "--json", "--experimental")
+    fields = json.loads(out)["pypi_metadata_changes"]["fields"]
+
+    assert code == 1
+    assert fields["requires_dist"]["old"] == {"state": "absent"}
+    assert fields["requires_dist"]["new"] == {"state": "present", "value": ["requests>=2.0"]}

@@ -219,3 +219,23 @@ def test_committed_installer_tree_fires_every_pypi_rule(tmp_path: Path) -> None:
 def test_committed_benign_tree_fires_no_pypi_rule(tmp_path: Path) -> None:
     ctx = pypi_package_context(tmp_path, "pypi_benign_bump")
     assert run_rules(ctx, experimental=True) == []
+
+
+def test_new_capability_in_a_moved_file_still_fires(tmp_path: Path) -> None:
+    """A file that moves directories (the src-layout restructure) but gains a
+    capability is a real addition: the old tree lacks it, so it must fire even though
+    the file moved rather than being edited in place.
+    """
+    ctx = ctx_from_files(
+        tmp_path,
+        {"requests/utils.py": b"VALUE = 1\n", "requests/api.py": b"# api\n"},
+        {
+            "src/requests/utils.py": b"VALUE = 1\nresult = eval('payload')\n",
+            "src/requests/api.py": b"# api\n",
+        },
+        ecosystem=Ecosystem.PYPI,
+    )
+    findings = pypi_eval_exec_added(ctx)
+    assert len(findings) == 1
+    assert findings[0].rule_id == PYPI_EVAL_EXEC_ADDED
+    assert findings[0].path == "requests/utils.py"

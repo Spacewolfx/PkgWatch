@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
-from pkgwatch.fetch.cache import DownloadCache, ExpectedDigest, default_cache_dir
+from pkgwatch.fetch.cache import DownloadCache, ExpectedDigest, default_cache_dir, digest_matches
 from pkgwatch.fetch.npm import expected_digest
 from tests.support.npm_registry import dist_for
 
@@ -69,6 +71,32 @@ def test_a_shasum_only_entry_uses_the_sha1_key(tmp_path: Path) -> None:
 
     assert cache.get(expected) == payload
     assert "sha1" in cache.path_for(expected).parts
+
+
+@pytest.mark.parametrize(
+    ("algorithm", "hexdigest_of"),
+    [
+        ("sha256", lambda data: hashlib.sha256(data).hexdigest()),
+        ("blake2b_256", lambda data: hashlib.blake2b(data, digest_size=32).hexdigest()),
+    ],
+)
+def test_pypi_algorithms_round_trip(
+    tmp_path: Path, algorithm: str, hexdigest_of: Callable[[bytes], str]
+) -> None:
+    payload = b"synthetic pypi artifact bytes"
+    cache = DownloadCache(tmp_path / "cache")
+    expected = ExpectedDigest(
+        method=f"digests.{algorithm}", algorithm=algorithm, hexdigest=hexdigest_of(payload)
+    )
+
+    cache.put(expected, payload)
+
+    assert cache.get(expected) == payload
+    assert algorithm in cache.path_for(expected).parts
+    # A wrong digest for the same algorithm never matches.
+    wrong = ExpectedDigest(method=expected.method, algorithm=algorithm, hexdigest="0" * 64)
+    assert digest_matches(payload, wrong) is False
+    assert digest_matches(payload, expected) is True
 
 
 def test_the_default_cache_dir_is_absolute_and_can_be_overridden(

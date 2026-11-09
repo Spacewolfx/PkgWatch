@@ -31,6 +31,10 @@ class ExpectedDigest:
 def digest_matches(data: bytes, expected: ExpectedDigest) -> bool:
     if expected.algorithm == "sha512":
         return hashlib.sha512(data).hexdigest() == expected.hexdigest
+    if expected.algorithm == "sha256":
+        return hashlib.sha256(data).hexdigest() == expected.hexdigest
+    if expected.algorithm == "blake2b_256":
+        return hashlib.blake2b(data, digest_size=32).hexdigest() == expected.hexdigest
     return hashlib.sha1(data).hexdigest() == expected.hexdigest  # noqa: S324 - legacy npm shasum
 
 

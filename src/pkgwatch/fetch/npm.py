@@ -30,6 +30,9 @@ from typing import Any, Protocol, cast
 
 from pkgwatch.config import Config
 from pkgwatch.fetch.cache import DownloadCache, ExpectedDigest, digest_matches
+from pkgwatch.models import Ecosystem
+from pkgwatch.version import UnsupportedVersion
+from pkgwatch.version import parse as parse_version
 
 # SPEC §3: "GET https://registry.npmjs.org/<name>" (full package doc, 200 verified
 # 2026-11-05). Scoped names use the %2F form, also stated in SPEC §3.
@@ -46,10 +49,6 @@ MAX_NAME_LENGTH = 214
 MAX_VERSION_LENGTH = 128
 
 _NAME_RE = re.compile(r"(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*")
-_VERSION_RE = re.compile(
-    r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
-    r"(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?"
-)
 
 # TB1: only the SPEC §3 manifest-shaped fields reach the diff. ``dist`` is consumed here
 # by the downloader and never handed to rules; unknown document fields are dropped.
@@ -92,6 +91,8 @@ class FetchErrorCode(StrEnum):
     DIGEST_MISMATCH = "DIGEST_MISMATCH"
     DIGEST_MISSING = "DIGEST_MISSING"
     DIGEST_UNSUPPORTED = "DIGEST_UNSUPPORTED"
+    # PyPI: the version exists in the document but offers no sdist/wheel file.
+    ARTIFACT_UNAVAILABLE = "ARTIFACT_UNAVAILABLE"
 
 
 class FetchError(Exception):
@@ -191,12 +192,15 @@ def validate_name(name: str) -> None:
 def validate_version(version: str) -> None:
     """Exact versions only. Ranges, tags, wildcards and partial versions are refused.
 
-    TODO(v0.1): SPEC §6.4's ecosystem version parser (a partial order over semver
-    prereleases and build metadata) is not implemented. This is shape validation only:
-    no ordering or comparison between two versions is claimed.
+    Delegates to the SPEC §6.4 parser so the acceptance grammar has one source of
+    truth; the parser's npm grammar is the shape this function has always accepted.
     """
-    if not version or len(version) > MAX_VERSION_LENGTH or not _VERSION_RE.fullmatch(version):
+    if not version or len(version) > MAX_VERSION_LENGTH:
         raise FetchError(FetchErrorCode.INVALID_VERSION)
+    try:
+        parse_version(Ecosystem.NPM, version)
+    except UnsupportedVersion:
+        raise FetchError(FetchErrorCode.INVALID_VERSION) from None
 
 
 def parse_spec(text: str) -> tuple[str, str]:

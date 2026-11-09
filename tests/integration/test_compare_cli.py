@@ -415,7 +415,7 @@ def test_same_host_redirect_is_followed(tmp_path: Path, capsys: pytest.CaptureFi
 @pytest.mark.parametrize(
     ("first", "second", "code"),
     [
-        ("pypi:demo-pkg@1.0.0", "npm:demo-pkg@1.1.0", "INVALID_SPEC"),
+        ("pypi:demo-pkg@1.0.0", "npm:demo-pkg@1.1.0", "PACKAGE_MISMATCH"),
         ("npm:Demo-Pkg@1.0.0", "npm:Demo-Pkg@1.1.0", "INVALID_PACKAGE_NAME"),
         ("npm:demo-pkg@latest", "npm:demo-pkg@1.1.0", "INVALID_VERSION"),
         ("npm:demo-pkg@1.0.0", "npm:demo-pkg@^1.1.0", "INVALID_VERSION"),

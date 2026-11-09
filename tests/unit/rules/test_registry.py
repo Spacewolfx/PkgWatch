@@ -12,7 +12,7 @@ from pkgwatch.models import Ecosystem, RuleFamily, Severity
 from pkgwatch.rules import RULES
 from pkgwatch.rules.registry import Registry, Rule
 from pkgwatch.rules.runner import run_rules
-from tests.support.fixtures import RULE_FIXTURES, rule_context
+from tests.support.fixtures import RULE_FIXTURES, pypi_rule_context, rule_context
 
 RULE_ID_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 SHIPPED_FAMILIES = {
@@ -76,12 +76,18 @@ def test_v02_rule_ids_severities_and_versions_follow_the_operator_decision() -> 
         "HEX_ESCAPE_DENSITY": Severity.LOW,
         "DEPENDENCY_ADDED": Severity.LOW,
         "REPOSITORY_URL_CHANGED": Severity.MEDIUM,
+        "PYPI_INSTALL_HOOK_ADDED": Severity.HIGH,
+        "PYPI_SHELL_EXEC_ADDED": Severity.HIGH,
+        "PYPI_EVAL_EXEC_ADDED": Severity.HIGH,
+        "PYPI_NET_ACCESS_ADDED": Severity.MEDIUM,
+        "PYPI_ENV_ENUM_ADDED": Severity.LOW,
+        "PYPI_DEPENDENCY_ADDED": Severity.LOW,
     }
     by_id = {rule.rule_id: rule for rule in RULES}
     for rule_id, severity in expected.items():
         assert by_id[rule_id].severity is severity
         assert by_id[rule_id].rule_version == 1
-    assert len(RULES) == 12
+    assert len(RULES) == 18
     assert "MAINTAINER_ADDED" not in by_id  # deferred, SPEC §4.5.1
 
 
@@ -111,21 +117,34 @@ def test_every_rule_ships_positive_and_negative_fixtures() -> None:
 
 @pytest.mark.parametrize("rule", list(RULES), ids=[rule.rule_id for rule in RULES])
 def test_positive_fixture_makes_the_rule_fire(rule: Rule, tmp_path: Path) -> None:
-    ctx = rule_context(tmp_path, rule.rule_id, "positive")
+    ctx = _context_for(tmp_path, rule, "positive")
     assert rule.rule_id in {finding.rule_id for finding in run_rules(ctx, experimental=True)}
 
 
 @pytest.mark.parametrize("rule", list(RULES), ids=[rule.rule_id for rule in RULES])
 def test_negative_fixture_keeps_the_rule_quiet(rule: Rule, tmp_path: Path) -> None:
-    ctx = rule_context(tmp_path, rule.rule_id, "negative")
+    ctx = _context_for(tmp_path, rule, "negative")
     assert rule.rule_id not in {finding.rule_id for finding in run_rules(ctx, experimental=True)}
+
+
+def _context_for(tmp_path: Path, rule: Rule, polarity: str) -> object:
+    if rule.ecosystems == (Ecosystem.PYPI,):
+        return pypi_rule_context(tmp_path, rule.rule_id, polarity)
+    return rule_context(tmp_path, rule.rule_id, polarity)
 
 
 def test_public_selector_returns_only_matching_ecosystem() -> None:
     from pkgwatch.rules import rules_for
 
-    assert rules_for(Ecosystem.NPM) == RULES
-    assert rules_for(Ecosystem.PYPI) == ()
+    npm = rules_for(Ecosystem.NPM)
+    pypi = rules_for(Ecosystem.PYPI)
+    assert npm == tuple(rule for rule in RULES if rule.ecosystems == (Ecosystem.NPM,))
+    assert pypi == tuple(rule for rule in RULES if rule.ecosystems == (Ecosystem.PYPI,))
+    assert {rule.rule_id for rule in npm} | {rule.rule_id for rule in pypi} == {
+        rule.rule_id for rule in RULES
+    }
+    assert not ({rule.rule_id for rule in npm} & {rule.rule_id for rule in pypi})
+    assert len(pypi) == 6
     assert rules_for(Ecosystem.CRATES) == ()
 
 

@@ -303,3 +303,117 @@ def test_invalid_pypi_specs_never_reach_the_network(
     assert exit_code == 2
     assert captured.err.strip() == code
     assert registry.requests == []
+
+
+# --------------------------------------------------------------------- rule firing
+
+INSTALLER_RULES = [
+    "PYPI_EVAL_EXEC_ADDED",
+    "PYPI_INSTALL_HOOK_ADDED",
+    "PYPI_SHELL_EXEC_ADDED",
+    "PYPI_NET_ACCESS_ADDED",
+    "PYPI_ENV_ENUM_ADDED",
+]
+
+
+def _installer_registry(tmp_path: Path) -> PyPIRegistry:
+    return pypi_pair_registry(
+        tmp_path,
+        "demo-pkg",
+        old_version=OLD_VERSION,
+        new_version=NEW_VERSION,
+        old_files={"demo/__init__.py": b"__version__ = '1.0.0'\n"},
+        new_files={
+            "demo/__init__.py": b"__version__ = '1.1.0'\n",
+            "setup.py": b'from setuptools import setup\nsetup(name="demo")\n',
+            "demo/shell.py": b'import os\nos.system("echo installed")\n',
+            "demo/dynamic.py": b"result = eval('1 + 1')\n",
+            "demo/net.py": b"import requests\n",
+            "demo/env.py": b"import os\nkeys = list(os.environ)\n",
+        },
+        new_requires=("requests>=2.0",),
+    )
+
+
+def test_installer_sdist_pair_exits_one_with_pypi_findings(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    registry = _installer_registry(tmp_path)
+    code, out, err = _run(capsys, registry, "--json")
+    payload = json.loads(out)
+
+    assert code == 1
+    assert err == ""
+    assert payload["ecosystem"] == "pypi"
+    assert [item["rule_id"] for item in payload["findings"]] == INSTALLER_RULES
+    assert payload["score"] == 100
+    assert payload["boosts"] == [
+        {"name": "multi_capability", "points": 10},
+        {"name": "lifecycle_plus_capability", "points": 20},
+    ]
+    by_id = {item["rule_id"]: item for item in payload["findings"]}
+    assert by_id["PYPI_INSTALL_HOOK_ADDED"]["path"] == "demo-pkg-1.1.0/setup.py"
+    assert by_id["PYPI_INSTALL_HOOK_ADDED"]["evidence"] == 'setup(name="demo")'
+    assert by_id["PYPI_SHELL_EXEC_ADDED"]["path"] == "demo-pkg-1.1.0/demo/shell.py"
+
+
+def test_installer_in_text_mode_lists_the_findings(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    registry = _installer_registry(tmp_path)
+    code, out, err = _run(capsys, registry)
+
+    assert code == 1
+    assert err == ""
+    assert "PYPI_INSTALL_HOOK_ADDED high demo-pkg-1.1.0/setup.py:2" in out
+    assert "PYPI_SHELL_EXEC_ADDED high demo-pkg-1.1.0/demo/shell.py:2" in out
+    assert "score: 100" in out
+    assert DISCLAIMER in out
+
+
+def test_dependency_finding_is_gated_by_experimental(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    default_registry = _installer_registry(tmp_path)
+    default_code, default_out, _ = _run(capsys, default_registry, "--json")
+    assert default_code == 1
+    assert "PYPI_DEPENDENCY_ADDED" not in {
+        item["rule_id"] for item in json.loads(default_out)["findings"]
+    }
+
+    experimental_registry = _installer_registry(tmp_path)
+    code, out, _ = _run(capsys, experimental_registry, "--json", "--experimental")
+    payload = json.loads(out)
+
+    assert code == 1
+    assert "PYPI_DEPENDENCY_ADDED" in {item["rule_id"] for item in payload["findings"]}
+    dep = next(item for item in payload["findings"] if item["rule_id"] == "PYPI_DEPENDENCY_ADDED")
+    assert dep["path"] is None
+    assert dep["details"]["dependency"] == "requests"
+
+
+def test_ignore_removes_a_rule_from_findings_and_score(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    registry = _installer_registry(tmp_path)
+    code, out, _ = _run(capsys, registry, "--ignore", "PYPI_SHELL_EXEC_ADDED", "--json")
+    payload = json.loads(out)
+
+    assert code == 1
+    assert "PYPI_SHELL_EXEC_ADDED" not in {item["rule_id"] for item in payload["findings"]}
+    assert payload["score"] < 100
+    assert payload["ignored_rules"] == [{"rule_id": "PYPI_SHELL_EXEC_ADDED", "findings": 1}]
+
+    _, text_out, _ = _run(capsys, registry, "--ignore", "PYPI_SHELL_EXEC_ADDED")
+    assert "ignored: PYPI_SHELL_EXEC_ADDED (1 findings)" in text_out
+
+
+def test_explain_marks_the_dependency_rule_as_experimental(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    registry = _installer_registry(tmp_path)
+    code, out, _ = _run(capsys, registry, "--explain", "--experimental")
+    assert code == 1
+    assert "PYPI_DEPENDENCY_ADDED (experimental):" in out
+    assert "PYPI_INSTALL_HOOK_ADDED:" in out
+    assert "PYPI_INSTALL_HOOK_ADDED (experimental)" not in out

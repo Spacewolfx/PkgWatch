@@ -14,6 +14,9 @@ from pkgwatch.rules import (  # noqa: F401 - importing a family module registers
     family2_capability,
     family3_obfuscation,
     family4_metadata,
+    family1_pypi,
+    family2_pypi,
+    family4_pypi,
 )
 from pkgwatch.rules.registry import DEFAULT, Rule, rule_set_version
 

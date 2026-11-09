@@ -43,10 +43,14 @@ line-length = 100
 target-version = "py312"
 src = ["src", "tests"]
 # Ruff 0.17 formats Python fences in Markdown; SPEC.md's schema block is column-aligned.
-extend-exclude = ["*.md"]
+# Fixture trees are detection-target data, not code: never lint or format them.
+extend-exclude = ["*.md", "tests/fixtures/**"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "S", "PT", "C4", "RET", "PIE"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S105", "S106", "S108"]
+# Import order here is registration order (npm's twelve rules, then PyPI's six), which
+# isort's alphabetical sort would interleave.
+"src/pkgwatch/rules/__init__.py" = ["I001"]

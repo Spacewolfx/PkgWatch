@@ -24,12 +24,15 @@ from tests.support.archives import Entry, make_tar
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 RULE_FIXTURES = FIXTURES / "rules"
 PACKAGE_FIXTURES = FIXTURES / "packages"
+PYPI_PACKAGE_FIXTURES = FIXTURES / "pypi-packages"
 
 REGISTRY_FILE = "registry.json"
 PUBLISHED = datetime(2026, 11, 5, 12, 0, tzinfo=UTC)
 
 
-def _side(case_dir: Path, name: str) -> tuple[list[Entry], dict[str, Any]]:
+def _side(
+    case_dir: Path, name: str, *, prefix: str = "package/"
+) -> tuple[list[Entry], dict[str, Any]]:
     root = case_dir / name
     if not root.is_dir():
         return [], {}
@@ -43,7 +46,7 @@ def _side(case_dir: Path, name: str) -> tuple[list[Entry], dict[str, Any]]:
         if relative == REGISTRY_FILE:
             metadata = json.loads(data)
             continue
-        entries.append(Entry(f"package/{relative}", data))
+        entries.append(Entry(f"{prefix}{relative}", data))
     return entries, metadata
 
 
@@ -57,10 +60,11 @@ def context_from_case(
     new_version: str = "1.1.0",
     published_at: datetime = PUBLISHED,
     limits: SandboxLimits | None = None,
+    prefix: str = "package/",
 ) -> DiffContext:
     active = limits or SandboxLimits()
-    old_entries, metadata_before = _side(case_dir, "old")
-    new_entries, metadata_after = _side(case_dir, "new")
+    old_entries, metadata_before = _side(case_dir, "old", prefix=prefix)
+    new_entries, metadata_after = _side(case_dir, "new", prefix=prefix)
 
     workdir = Path(tempfile.mkdtemp(dir=tmp_path))
     old_archive = make_tar(workdir / "old.tgz", old_entries)
@@ -94,3 +98,23 @@ def package_context(tmp_path: Path, case_name: str, **kwargs: Any) -> DiffContex
     if not case.is_dir():
         raise AssertionError(f"missing integration fixture: {case}")
     return context_from_case(tmp_path, case, **kwargs)
+
+
+def pypi_rule_context(tmp_path: Path, rule_id: str, polarity: str, **kwargs: Any) -> DiffContext:
+    """PyPI rule fixtures: sdist-shaped trees, no ``package/`` prefix, PyPI ecosystem."""
+    case = RULE_FIXTURES / rule_id / polarity
+    if not case.is_dir():
+        raise AssertionError(f"missing fixture for {rule_id}/{polarity}: {case}")
+    return context_from_case(
+        tmp_path, case, ecosystem=Ecosystem.PYPI, package_name="demo", prefix="", **kwargs
+    )
+
+
+def pypi_package_context(tmp_path: Path, case_name: str, **kwargs: Any) -> DiffContext:
+    """PyPI package fixtures shaped like real sdists, for end-to-end-shaped tests."""
+    case = PYPI_PACKAGE_FIXTURES / case_name
+    if not case.is_dir():
+        raise AssertionError(f"missing PyPI fixture: {case}")
+    return context_from_case(
+        tmp_path, case, ecosystem=Ecosystem.PYPI, package_name="demo", prefix="", **kwargs
+    )

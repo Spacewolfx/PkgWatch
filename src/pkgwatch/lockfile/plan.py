@@ -1,10 +1,12 @@
 """Deterministic, no-network planning for two parsed lockfiles (SPEC §9.1).
 
-Only a package name present on both sides can become a changed pair, and only when each
-side holds exactly one version. Names with several versions are reported as skips rather
-than inventing an old→new pairing: SPEC §6.4's version order does not exist yet, so no
-upgrade/downgrade direction is claimed. Source support reuses ``fetch.npm``'s registry
-allow-list; nothing here fetches, executes or resolves a package.
+Only a package name present on both sides can become a changed pair. A name with one
+version per side pairs directly. A name with several versions pairs when the changed
+sets (versions present on exactly one side) are the same size on both sides: SPEC §6.4's
+version order sorts each set and the pairing is index-wise, lowest to lowest. Any other
+multi-version shape stays a ``MULTIPLE_VERSIONS`` skip rather than inventing a pairing.
+Source support reuses ``fetch.npm``'s registry allow-list; nothing here fetches,
+executes or resolves a package.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ import urllib.parse
 from dataclasses import dataclass
 from enum import StrEnum
 
+from pkgwatch import version
 from pkgwatch.config import LockConfig
 from pkgwatch.fetch.npm import is_registry_url
 from pkgwatch.lockfile.parser import (
@@ -22,6 +25,7 @@ from pkgwatch.lockfile.parser import (
     ParsedLockfile,
     SkipReason,
 )
+from pkgwatch.models import Ecosystem
 
 _SIDE_ORDER = {"old": 0, "new": 1}
 
@@ -119,48 +123,46 @@ def plan_lock_update(
             continue
 
         if len(old_versions) > 1 or len(new_versions) > 1:
+            ordered = (
+                _version_ordered(changed_old, changed_new)
+                if changed_old and len(changed_old) == len(changed_new)
+                else None
+            )
+            if ordered is not None:
+                for old_version, new_version in ordered:
+                    _emit_pair(
+                        name,
+                        old_version,
+                        new_version,
+                        old_entries[old_version],
+                        new_entries[new_version],
+                        pairs=pairs,
+                        unanalysed=unanalysed,
+                        skipped=skipped,
+                    )
+                continue
             unanalysed.append(UnanalysedPackage(name, None, None, SkipReason.MULTIPLE_VERSIONS))
             skipped.extend(
-                PlanSkip(PlanSide.OLD, name, version, SkipReason.MULTIPLE_VERSIONS)
-                for version in sorted(changed_old)
+                PlanSkip(PlanSide.OLD, name, item, SkipReason.MULTIPLE_VERSIONS)
+                for item in sorted(changed_old)
             )
             skipped.extend(
-                PlanSkip(PlanSide.NEW, name, version, SkipReason.MULTIPLE_VERSIONS)
-                for version in sorted(changed_new)
+                PlanSkip(PlanSide.NEW, name, item, SkipReason.MULTIPLE_VERSIONS)
+                for item in sorted(changed_new)
             )
             continue
 
         (old_version,) = old_versions
         (new_version,) = new_versions
-        old_reason = _source_reason(old_entries[old_version])
-        new_reason = _source_reason(new_entries[new_version])
-        if old_reason is None and new_reason is None:
-            pairs.append(ChangedPair(name, old_version, new_version))
-            continue
-
-        unanalysed.append(
-            UnanalysedPackage(
-                name,
-                old_version,
-                new_version,
-                new_reason or old_reason or SkipReason.PAIR_SOURCE_UNSUPPORTED,
-            )
-        )
-        skipped.append(
-            PlanSkip(
-                PlanSide.OLD,
-                name,
-                old_version,
-                old_reason if old_reason is not None else SkipReason.PAIR_SOURCE_UNSUPPORTED,
-            )
-        )
-        skipped.append(
-            PlanSkip(
-                PlanSide.NEW,
-                name,
-                new_version,
-                new_reason if new_reason is not None else SkipReason.PAIR_SOURCE_UNSUPPORTED,
-            )
+        _emit_pair(
+            name,
+            old_version,
+            new_version,
+            old_entries[old_version],
+            new_entries[new_version],
+            pairs=pairs,
+            unanalysed=unanalysed,
+            skipped=skipped,
         )
 
     # New packages are analysis work too (SPEC §9.1), unless --no-new opted out of them.
@@ -207,6 +209,69 @@ def _ordered_skips(items: list[PlanSkip]) -> tuple[PlanSkip, ...]:
                 item.version or "",
                 item.reason.value,
             ),
+        )
+    )
+
+
+def _version_ordered(old_set: set[str], new_set: set[str]) -> list[tuple[str, str]] | None:
+    """SPEC §6.4 pairing: sort both changed sets by version, zip index-wise.
+
+    Returns ``None`` when any version is unparseable — then no order is claimed and the
+    caller keeps the ``MULTIPLE_VERSIONS`` fallback. Ties on equal precedence break by
+    text, so the pairing is deterministic.
+    """
+
+    def order(text: str) -> tuple[tuple[object, ...], str]:
+        return (version.parse(Ecosystem.NPM, text).key, text)
+
+    try:
+        old_sorted = sorted(old_set, key=order)
+        new_sorted = sorted(new_set, key=order)
+    except version.UnsupportedVersion:
+        return None
+    return list(zip(old_sorted, new_sorted, strict=True))
+
+
+def _emit_pair(
+    name: str,
+    old_version: str,
+    new_version: str,
+    old_entry: LockEntry,
+    new_entry: LockEntry,
+    *,
+    pairs: list[ChangedPair],
+    unanalysed: list[UnanalysedPackage],
+    skipped: list[PlanSkip],
+) -> None:
+    """Classify one candidate pairing: analysable, or unanalysed with per-side skips."""
+    old_reason = _source_reason(old_entry)
+    new_reason = _source_reason(new_entry)
+    if old_reason is None and new_reason is None:
+        pairs.append(ChangedPair(name, old_version, new_version))
+        return
+
+    unanalysed.append(
+        UnanalysedPackage(
+            name,
+            old_version,
+            new_version,
+            new_reason or old_reason or SkipReason.PAIR_SOURCE_UNSUPPORTED,
+        )
+    )
+    skipped.append(
+        PlanSkip(
+            PlanSide.OLD,
+            name,
+            old_version,
+            old_reason if old_reason is not None else SkipReason.PAIR_SOURCE_UNSUPPORTED,
+        )
+    )
+    skipped.append(
+        PlanSkip(
+            PlanSide.NEW,
+            name,
+            new_version,
+            new_reason if new_reason is not None else SkipReason.PAIR_SOURCE_UNSUPPORTED,
         )
     )
 

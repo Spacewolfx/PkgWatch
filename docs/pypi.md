@@ -26,12 +26,21 @@ a mismatch stops the run with `DIGEST_MISMATCH`. An sdist (`.tar.gz`) is preferr
 if a release has only a wheel (`.whl`), the wheel is used; if it has neither,
 `ARTIFACT_UNAVAILABLE`.
 
+Per-version registry metadata is fetched from `GET /pypi/<name>/<version>/json` for
+both versions and diffed into `pypi metadata changes` (`requires_dist`,
+`requires_python`, `classifiers`, `project_urls`, `entry_points`, `yanked`,
+`summary`). If that document cannot be fetched, every field reads `(not available)`
+and the artifact analysis still runs.
+
 ## What is analysed
 
 Both artifacts are unpacked only through `pkgwatch.sandbox` and read as text. Nothing
 is ever executed, imported, installed or built — including `setup.py`, which is
-analysed statically. The six PyPI rules in [rules.md](rules.md) run; dependency
-evidence comes from the shipped `PKG-INFO`/`METADATA`, never from registry metadata.
+analysed statically. An sdist's `{name}-{version}/` root is stripped before diffing,
+so the same file across versions compares to itself and a version bump reports
+`modified > 0` rather than all-added/all-removed. The six PyPI rules in
+[rules.md](rules.md) run; dependency evidence comes from the shipped
+`PKG-INFO`/`METADATA`, never from registry metadata.
 
 ## Limitations
 

@@ -1,6 +1,6 @@
 # pkgwatch
 
-**PkgWatch: static supply-chain diff for npm version updates. No code execution, offline, deterministic.**
+**PkgWatch: static supply-chain diff for npm and PyPI version updates. No code execution, offline, deterministic.**
 
 ```bash
 pkgwatch compare npm:<name>@<old> npm:<name>@<new> [--json] [--fail-on LEVEL]
@@ -11,13 +11,18 @@ pkgwatch compare npm:<name>@<old> npm:<name>@<new> [--json] [--fail-on LEVEL]
 [JSON schema](#json-schema) · [Lockfile parsing and planning](#lockfile-parsing-and-planning) ·
 [`pkgwatch lock`](#pkgwatch-lock) · [How to use in a PR](#how-to-use-in-a-pr) ·
 [Limitations](#limitations) · [Configuration](#configuration) · [Rules](#rules) ·
-[Case study](#case-study) · [PyPI support (roadmap)](#pypi-support-roadmap)
+[Case study](#case-study) · [PyPI support](#pypi-support)
 
 ## What it does
 
 - Reads the npm package document from the endpoint listed in [SPEC.md](SPEC.md) §3
   (`GET https://registry.npmjs.org/<name>`) and takes each version's tarball URL from
   `versions[v].dist.tarball`. No other endpoint is constructed.
+- For PyPI, reads the JSON document at `GET https://pypi.org/pypi/<name>/json` and
+  takes each release's file URL from `releases[v]`; artifacts come from
+  `files.pythonhosted.org` only. An sdist (`.tar.gz`) is preferred, else a wheel
+  (`.whl`); both are unpacked only through the sandbox and digests are verified
+  (`sha256`, falling back to `blake2b_256`).
 - Downloads both tarballs over HTTPS with a User-Agent, per-request timeouts, hard size
   caps on the document and each tarball, and redirects only to the registry's own host.
 - Verifies `dist.integrity` (SRI, sha512) and falls back to `dist.shasum` only when
@@ -39,8 +44,9 @@ pkgwatch compare npm:<name>@<old> npm:<name>@<new> [--json] [--fail-on LEVEL]
 - **No code execution.** Package content is never executed, imported, installed or run —
   not in the pipeline and not in tests. No `npm`, `npx`, `node`, package scripts,
   package-code imports, or AST/eval-based execution. This is static analysis only.
-- **npm only, exact versions only.** No ranges, tags, dist-tags, PyPI, crates.io,
-  watchlists, feeds, schedulers, store writes, model code or dataset code.
+- **npm and PyPI, exact versions only.** No ranges, tags, dist-tags, crates.io,
+  watchlists, feeds, schedulers, store writes, model code or dataset code. The
+  `lock` command covers npm lockfiles only; PyPI lock support is not implemented.
 - **Detection quality has not been measured.** Findings are signals for human review, not
   proof of malicious behaviour. The score is an ordering, not a verdict. The v0.2
   severities and `[obfuscation]` thresholds are starting values, not tuned or measured.
@@ -84,6 +90,9 @@ uv run pkgwatch compare npm:demo-pkg@1.0.0 npm:demo-pkg@1.1.0 --json
 uv run pkgwatch compare npm:demo-pkg@1.0.0 npm:demo-pkg@1.1.0 --fail-on high
 uv run pkgwatch compare npm:demo-pkg@1.0.0 npm:demo-pkg@1.1.0 --verbose --explain
 uv run pkgwatch compare npm:demo-pkg@1.0.0 npm:demo-pkg@1.1.0 --ignore NET_ACCESS_ADDED
+
+uv run pkgwatch compare pypi:requests@2.31.0 pypi:requests@2.32.0
+uv run pkgwatch compare pypi:requests@2.31.0 pypi:requests@2.32.0 --json --experimental
 
 uv run pkgwatch lock --old package-lock.json --new updated-package-lock.json
 uv run pkgwatch lock --old old.json --new new.json --json
@@ -208,8 +217,8 @@ Errors print a stable code, never an exception message (those can contain packag
 `INVALID_SPEC`, `INVALID_PACKAGE_NAME`, `INVALID_VERSION`, `PACKAGE_MISMATCH`,
 `REGISTRY_DOC_INVALID`, `VERSION_NOT_FOUND`, `TARBALL_URL_INVALID`, `REDIRECT_REJECTED`,
 `SIZE_LIMIT_EXCEEDED`, `HTTP_ERROR`, `FETCH_FAILED`, `DIGEST_MISMATCH`, `DIGEST_MISSING`,
-`DIGEST_UNSUPPORTED`, every sandbox rejection code in SPEC §6.5, `ANALYSIS_INCOMPLETE`,
-`UNKNOWN_RULE_ID`, `INTERNAL_ERROR`. A malformed manifest is recorded as the parse problem
+`DIGEST_UNSUPPORTED`, `ARTIFACT_UNAVAILABLE`, every sandbox rejection code in SPEC §6.5,
+`ANALYSIS_INCOMPLETE`, `UNKNOWN_RULE_ID`, `INTERNAL_ERROR`. A malformed manifest is recorded as the parse problem
 `MANIFEST_INVALID_JSON`. `analysis_incomplete` never exits 0.
 
 ## Lockfile parsing and planning
@@ -374,7 +383,7 @@ publishing TODO: [docs/ci.md](docs/ci.md).
 ### Limitations
 
 - Static analysis only: no code is ever executed, imported, installed or built.
-- npm only, exact versions only, `package-lock.json` v2/v3 only.
+- npm and PyPI, exact versions only; `package-lock.json` v2/v3 only.
 - A brand-new package is analysed without a baseline — everything it contains looks
   added, so its findings are noisier; only lifecycle findings count toward `--fail-on`.
 - Lifecycle evidence is only the manifest line.
@@ -473,26 +482,25 @@ The lesson is already in this project's design: dependency metadata is family 4
 (experimental), and nothing PkgWatch reports claims to be a verdict about malicious
 behaviour — `measured: false` everywhere.
 
-## PyPI support (roadmap)
+## PyPI support
 
-PyPI is a roadmap, not a feature — npm is the only supported ecosystem today. The same
-shape would apply, and the engine is intentionally ecosystem-agnostic below the
-registry boundary:
+`compare` supports PyPI exact versions through the JSON API at
+`https://pypi.org/pypi/<name>/json` (PEP 503 name normalisation, so `Demo_Pkg`,
+`demo-pkg` and `demo.pkg` are the same project). Each release's sdist (`.tar.gz`) is
+preferred, else its wheel (`.whl`); both unpack only through the sandbox and digests
+are verified before extraction. Build manifests (`setup.py`, `pyproject.toml`,
+`setup.cfg`) and Python source (`.py`) are read as text only, never executed —
+including `setup.py`, which is analysed statically like everything else.
 
-- **Same pipeline:** fetch one exact version document, download the archive, unpack it
-  only through the sandbox, build a file-level diff, run versioned rules, score.
-- **Archives:** PyPI ships sdist (`.tar.gz`) and wheels (`.whl`, zip) — the sandbox
-  already rejects traversal and absolute paths ahead of any reader, so both formats fit
-  the existing threat model; the archive reader is the new part.
-- **Versions:** PyPI needs PEP 440 ordering for pairing (SPEC §6.4 covers npm/crates
-  semver today; the PyPI half is the open TODO) and would reuse the same
-  `version.parse(ecosystem, text)` shape.
-- **"Install-time hooks":** setup scripts, `setup.py` setup-time behaviour and binary
-  wheels are the PyPI equivalents of npm lifecycle hooks — all readable statically,
-  never executed, exactly as today.
-- **Endpoints:** the registry endpoint for PyPI is not specified yet; nothing may be
-  invented without a SPEC §3 equivalent first. That is the first design step when this
-  is picked up.
+Six PyPI-specific rules run (SPEC §4.5.2): `PYPI_INSTALL_HOOK_ADDED`
+(lifecycle, high), `PYPI_SHELL_EXEC_ADDED`, `PYPI_EVAL_EXEC_ADDED` (both high),
+`PYPI_NET_ACCESS_ADDED` (medium), `PYPI_ENV_ENUM_ADDED` (low), and
+`PYPI_DEPENDENCY_ADDED` (metadata, low) — the last is experimental-gated, off by
+default, exactly like npm's `DEPENDENCY_ADDED`. Dependency evidence comes from the
+shipped `PKG-INFO`/`METADATA` document, never from registry metadata.
+
+Not implemented yet: the `lock` command for PyPI, and wheel-binary analysis.
+
 
 ## Open assumptions (TODO)
 
@@ -505,7 +513,8 @@ registry boundary:
 - `devDependencies`, `engines`, `os`, `cpu` and `bin` are not family-4 rules yet.
 - The v0.2 severities and `[obfuscation]` thresholds are initial untuned values, not
   measured; `eval/` is where they get challenged.
-- SPEC §6.4's version parser is not implemented; v0.2 validates version shape only.
+- SPEC §6.4's version parser compares semver and PEP 440 versions; it is implemented
+  and also drives version-ordered pairing for multi-version lockfile names.
 - ARCHITECTURE §2's content-addressed caches are not implemented; v0.2 uses temp files and
   writes nothing to `data/` or the SQL store.
 

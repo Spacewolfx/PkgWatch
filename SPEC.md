@@ -80,8 +80,16 @@ TODO (M4+): confirm a supported change-stream before writing a firehose reader.
   per-version field: absent and explicitly `null` are reported as such, not as empty.
 - PyPI: `info.name`, `info.version`, `info.requires_dist`, `info.maintainer(_email)`,
   `info.project_urls`, `urls[].{filename,packagetype,url,sha256,size,upload_time,
-  python_version}`. **Preference order for the artifact: `sdist` first** (behavior lives in
-  `setup.py` / `pyproject.toml`), then `bdist_wheel`, then `other`.
+  python_version}`, and per-file `digests.{sha256,blake2b_256}`. **Artifact selection
+  for `compare`: the first sdist by filename, else the first wheel by filename, else
+  `ARTIFACT_UNAVAILABLE` — no silent fall-through to the next candidate.** Digests are
+  verified in preference order `sha256`, then `blake2b_256`; a malformed hex value
+  counts as absent, other algorithms alone are `DIGEST_UNSUPPORTED`, and no usable
+  digest is `DIGEST_MISSING`. Only HTTPS on `pypi.org` (document) and
+  `files.pythonhosted.org` (artifacts) is followed, with no userinfo and port 443
+  only. Names are PEP 503 normalized before the document URL is built, so
+  `Foo_Bar`, `foo-bar` and `foo.bar` are the same project; `compare` rejects a pair
+  whose specs disagree on ecosystem or normalized name with `PACKAGE_MISMATCH`.
 - crates: `versions[].{crate, num, created, downloads, yanked}`, `dependencies[].{crate_id,
   req, kind, optional}`; tarball from the download route.
 
@@ -182,8 +190,8 @@ not fully analysed", so both flip `analysis_incomplete`.
 
 | # | Family | M1 | Examples (rule_id) |
 |---|---|---|---|
-| 1 | Lifecycle scripts | — (M2) | `NPM_INSTALL_SCRIPT_ADDED`, `NPM_SCRIPT_INJECTION_FROM_METADATA`, `PY_SETUP_CMDCLASS_HOOK_ADDED`, `RUST_BUILD_RS_ADDED_OR_CHANGED` |
-| 2 | New dangerous capability (present in `new`, absent in `old`) | — (M2) | `JS_CHILD_PROCESS_ADDED`, `PY_SUBPROCESS_ADDED`, `NET_ACCESS_ADDED`, `DYNAMIC_EVAL_ADDED`, `FS_WRITE_OUTSIDE_PACKAGE_ADDED`, `ENV_ENUMERATION_ADDED`, `RUST_UNSAFE_OR_FFI_ADDED` |
+| 1 | Lifecycle scripts | — (M2) | `NPM_INSTALL_SCRIPT_ADDED`, `NPM_SCRIPT_INJECTION_FROM_METADATA`, `PYPI_INSTALL_HOOK_ADDED`, `RUST_BUILD_RS_ADDED_OR_CHANGED` |
+| 2 | New dangerous capability (present in `new`, absent in `old`) | — (M2) | `JS_CHILD_PROCESS_ADDED`, `PYPI_SHELL_EXEC_ADDED`, `NET_ACCESS_ADDED`, `DYNAMIC_EVAL_ADDED`, `FS_WRITE_OUTSIDE_PACKAGE_ADDED`, `ENV_ENUMERATION_ADDED`, `RUST_UNSAFE_OR_FFI_ADDED` |
 | 3 | Obfuscation signals (report the signal, not the intent) | — (M4) | `BASE64_BLOB_PRESENT`, `HIGH_ENTROPY_STRINGS`, `HEX_ESCAPE_DENSITY` |
 | 4 | Metadata changes | — (M4) | `MAINTAINER_ADDED`, `DEPENDENCY_ADDED`, `REPOSITORY_URL_CHANGED` |
 
@@ -227,6 +235,27 @@ invented as a rule without an operator decision.
 as a parse problem, never raised, and flips `analysis_incomplete` (CLI exit 2). The same
 defensive parser is used by the "package.json changes" section and by
 `REPOSITORY_URL_CHANGED`.
+
+### 4.5.2 PyPI rules — operator decision, initial untuned values, not measured
+
+**Operator decision, initial untuned values, not measured (2026-11-09).** Six
+PyPI-specific rules, disjoint from the npm rules by ecosystem. `rule_version = 1` for
+all of them. They are pure `DiffContext -> list[Finding]` functions, follow §4.1/§4.4,
+and share the `w1` score table with npm (§5). Capability matching reuses the same
+added-lines contract as §4.5 family 2, over `.py` files plus the build manifests
+`setup.py`, `pyproject.toml`, `setup.cfg` at depth <= 2.
+`PYPI_DEPENDENCY_ADDED` reads the shipped `PKG-INFO`/`METADATA` document (never the
+registry document) and is experimental-gated by the runner, exactly like npm's
+`DEPENDENCY_ADDED` (§4.5.1); no other PyPI rule is experimental.
+
+| `rule_id` | family | severity | patterns / reads |
+|---|---|---|---|
+| `PYPI_INSTALL_HOOK_ADDED` | 1 lifecycle | `high` | ADDED lines of the new tree's build manifests matching `setuptools.setup(`, `setup(`, `[project.scripts]`, `[project.entry-points`; suppressed when the old tree's build files already declared the hook |
+| `PYPI_SHELL_EXEC_ADDED` | 2 capability | `high` | `os.system(`, `os.popen(`, `subprocess.` over ADDED `.py` lines |
+| `PYPI_EVAL_EXEC_ADDED` | 2 capability | `high` | `eval(`, `exec(`, `__import__(` over ADDED `.py` lines (lookbehind rejects member access and longer identifiers) |
+| `PYPI_NET_ACCESS_ADDED` | 2 capability | `medium` | `import`/`from` of `socket`, `urllib`, `requests`, `http.client`, `http`, and the `urllib.request` attribute, over ADDED `.py` lines |
+| `PYPI_ENV_ENUM_ADDED` | 2 capability | `low` | `os.environ`, `os.getenv(`, `getenv(` over ADDED `.py` lines |
+| `PYPI_DEPENDENCY_ADDED` | 4 metadata | `low` | `Requires-Dist` names added in the new tree's `PKG-INFO`/`METADATA` vs the old tree's; one package-level finding per added name |
 
 ## 5. Score — weights and computation
 
@@ -366,15 +395,17 @@ The scope is `(ecosystem, package_name)` rather than bare name so that a package
 
 ### 6.4 Version parsing
 
-Own parser, no third-party semver dependency (fewer unpinned transitive deps, and the
-comparator must be property-tested in isolation). Three orderings, one per ecosystem:
-npm/crates semver (`major.minor.patch[-prerelease][+build]`, prerelease ordering per semver
-§11, **build metadata ignored for precedence** so `1.0.0+a` and `1.0.0+b` are equal — the
+**Status: implemented (2026-11-09).** Own parser, no third-party semver dependency
+(fewer unpinned transitive deps, and the comparator must be property-tested in
+isolation). Three orderings, one per ecosystem: npm/crates semver
+(`major.minor.patch[-prerelease][+build]`, prerelease ordering per semver §11,
+**build metadata ignored for precedence** so `1.0.0+a` and `1.0.0+b` are equal — the
 comparator is a partial order and the code says so); PyPI PEP 440 (epoch, release,
 pre/post/dev, local version ignored for precedence). `version.parse(ecosystem, text)`
 raises `UnsupportedVersion` on garbage instead of coercing; hypothesis tests check
 reflexivity/antisymmetry/transitivity, sort stability, round-trip `parse → canonical → parse`,
-and that `compare(v, v) == 0` for every generated string.
+and that `compare(v, v) == 0` for every generated string. The parser also drives
+version-ordered pairing for multi-version lockfile names (§9.1).
 
 ### 6.5 Sandbox limit set and rejection codes
 
@@ -479,7 +510,8 @@ capture and `run_id`.
 `fetch --release eco/name/version` · `check <eco> <name> <v_old> <v_new> [--offline-dir]`
 (the offline pair-analysis used by integration tests) · `score --release …` ·
 `export-dataset [--split]` · `validate-dataset` · `train|eval|explain` (M5, own entry) ·
-`compare npm:<name>@<old> npm:<name>@<new>` (v0.2) · `lock --old OLD_LOCK --new NEW_LOCK`
+`compare npm:<name>@<old> npm:<name>@<new>` (v0.2) · `compare pypi:<name>@<old> pypi:<name>@<new>`
+(§9.2, PyPI JSON API) · `lock --old OLD_LOCK --new NEW_LOCK`
 (§9.1, implemented in `lock/` + `lockfile/`).
 
 ### 9.1 `pkgwatch lock` — operator decision, initial untuned values, not measured (2026-11-07)
@@ -491,8 +523,9 @@ changed, show what the update changes at install time and in code, in one short 
 
 1. New CLI error codes are accepted for this command and are listed in README.
 2. Compared pairs: only packages present in **both** lockfiles whose version changed. The old
-   version is the one in the old lockfile, **not** chosen by publish date. No version ordering
-   is claimed (the §6.4 parser does not exist), so upgrade vs downgrade is not labelled.
+   version is the one in the old lockfile, **not** chosen by publish date. Upgrade vs
+   downgrade is not labelled; balanced multi-version names pair by the §6.4 version
+   order (implemented 2026-11-09).
 3. Packages present only in the new lockfile are analysed against an **empty old tree**
    ("no baseline"), reusing `fetch/`, `sandbox/`, `diff/`, `rules/` and `score/` unchanged
    (L2c, 2026-11-08). They appear in a separate "new packages (no baseline)" section, never
@@ -598,7 +631,35 @@ documents), `cli.py` exposes `lock` including `--no-new`, `--plan`, `--config`,
 `--baseline`/`--update-baseline`/`--baseline-allow-lifecycle` and `--markdown`, and
 `action.yml` plus `examples/github-workflow.yml` describe the GitHub Action (untested
 on GitHub; config, baseline and the old lockfile are read from the base branch).
-Still TODO: any version ordering (§6.4), so multi-version names stay unpaired.
+Version ordering (§6.4) is implemented: balanced multi-version names pair in version
+order; unbalanced or unparseable sets stay unpaired (`MULTIPLE_VERSIONS`).
+
+### 9.2 `pkgwatch compare` — PyPI support (2026-11-09)
+
+1. **Endpoint.** `compare pypi:<name>@<old> pypi:<name>@<new>` fetches the single exact
+   project document `GET https://pypi.org/pypi/<name>/json`; artifact URLs are read
+   from that document's `releases[v]` file entries and never invented. Only HTTPS on
+   `pypi.org` (document) and `files.pythonhosted.org` (artifacts) is followed (§3).
+2. **Name matching.** Each spec is parsed by its own ecosystem (`pypi:` vs `npm:`);
+   a pair must agree on the ecosystem and the PEP 503 normalized name, else
+   `PACKAGE_MISMATCH`. The report shows the original spelling.
+3. **Artifact selection.** First sdist by filename, else first wheel by filename, else
+   `ARTIFACT_UNAVAILABLE`; a bad URL or digest on the chosen entry is an error
+   (`TARBALL_URL_INVALID` / `DIGEST_MISSING` / `DIGEST_UNSUPPORTED`), never a
+   fall-through to the next candidate (determinism).
+4. **Digests.** Verified against `digests.sha256`, falling back to
+   `digests.blake2b_256`; malformed hex counts as absent. The download cache keys on
+   the verified digest, as for npm.
+5. **Rules.** Six PyPI-specific rules (§4.5.2), disjoint from the npm rules by
+   ecosystem, scored by the unchanged `w1` table. `PYPI_DEPENDENCY_ADDED` reads the
+   shipped `PKG-INFO`/`METADATA`, never registry metadata.
+6. **Gating (resolves the plan's §7 ambiguity).** The runner's family gating
+   (`EXPERIMENTAL_FAMILIES = {OBFUSCATION, METADATA}`) stays ecosystem-agnostic and
+   unchanged, so `PYPI_DEPENDENCY_ADDED` is off by default and surfaces under
+   `--experimental`, exactly like npm's `DEPENDENCY_ADDED`. §7's "no PyPI finding is
+   experimental in v1" is read as "no new gating concept". The `compare` JSON
+   `schema_version` stays 2; `ecosystem` reads `"pypi"` and `package_json_changes`
+   renders the empty skeleton.
 
 ## 10. Open assumptions (not silently guessed)
 

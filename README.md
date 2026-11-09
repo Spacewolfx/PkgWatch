@@ -524,4 +524,4 @@ uv run ruff format --check .
 - Raw gate logs: [docs/](docs/)
 - Licence: [MIT](LICENSE)
 
-© 2026 Halley
+© 2026 Spacewolfx

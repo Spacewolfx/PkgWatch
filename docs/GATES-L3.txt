@@ -11,10 +11,10 @@ Success: no issues found in 46 source files
 
 ## uv run pytest -v
 ============================= test session starts =============================
-platform win32 -- Python 3.12.14, pytest-9.2.0, pluggy-1.7.0 -- C:\Users\Halley\Desktop\yeni\pkgwatch\.venv\Scripts\python.exe
+platform win32 -- Python 3.12.14, pytest-9.2.0, pluggy-1.7.0 -- C:\Users\<user>\Desktop\yeni\pkgwatch\.venv\Scripts\python.exe
 cachedir: .pytest_cache
 hypothesis profile 'pkgwatch' -> database=None, max_examples=60, print_blob=True, derandomize=True, deadline=timedelta(milliseconds=10000), suppress_health_check=(HealthCheck.too_slow, HealthCheck.function_scoped_fixture)
-rootdir: C:\Users\Halley\Desktop\yeni\pkgwatch
+rootdir: C:\Users\<user>\Desktop\yeni\pkgwatch
 configfile: pyproject.toml
 testpaths: tests
 plugins: hypothesis-6.170.14

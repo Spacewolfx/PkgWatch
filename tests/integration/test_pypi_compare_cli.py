@@ -200,6 +200,7 @@ def test_json_shape_is_stable_for_pypi(tmp_path: Path, capsys: pytest.CaptureFix
         "ignored_rules",
         "rule_set_version",
         "measured",
+        "warnings",
         "disclaimer",
     }
     # The JSON schema is ecosystem-aware: PyPI carries pypi_metadata_changes and does
@@ -458,3 +459,42 @@ def test_pypi_metadata_changes_diff_requires_dist(
     assert code == 1
     assert fields["requires_dist"]["old"] == {"state": "absent"}
     assert fields["requires_dist"]["new"] == {"state": "present", "value": ["requests>=2.0"]}
+
+
+def test_disjoint_file_sets_emit_a_noop_warning(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """modified==0 with adds and removes for the same package warns (the silent bug)."""
+    registry = pypi_pair_registry(
+        tmp_path,
+        "demo-pkg",
+        old_version=OLD_VERSION,
+        new_version=NEW_VERSION,
+        old_files={"old_only.py": b"# only in old\n"},
+        new_files={"new_only.py": b"# only in new\n"},
+        old_packagetype="bdist_wheel",
+        new_packagetype="bdist_wheel",
+    )
+    code, out, err = _run(capsys, registry, "--json")
+    payload = json.loads(out)
+
+    assert code == 0
+    assert payload["files"]["modified"] == 0
+    assert payload["files"]["added"] > 0
+    assert payload["files"]["removed"] > 0
+    assert payload["warnings"], "expected a no-op warning"
+    assert any("silent no-op" in warning for warning in payload["warnings"])
+    assert "silent no-op" in err
+
+
+def test_a_normal_version_bump_has_no_noop_warning(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    registry = _benign(tmp_path)
+    code, out, err = _run(capsys, registry, "--json")
+    payload = json.loads(out)
+
+    assert code == 0
+    assert payload["files"]["modified"] > 0
+    assert payload["warnings"] == []
+    assert "silent no-op" not in err

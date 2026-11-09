@@ -211,6 +211,7 @@ def test_json_shape_is_stable(tmp_path: Path, capsys: pytest.CaptureFixture[str]
         "ignored_rules",
         "rule_set_version",
         "measured",
+        "warnings",
         "disclaimer",
     }
     assert payload["schema_version"] == 2
@@ -540,7 +541,8 @@ def test_changed_files_are_capped_at_50_and_verbose_shows_all(
     code, out, err = _run(capsys, registry, "--json")
     payload = json.loads(out)
     assert code == 0
-    assert err == ""
+    # A total file-set replacement has modified==0, so the no-op guard warns (heuristic).
+    assert "silent no-op" in err
     assert len(payload["changed_files"]) == 50
     assert payload["changed_files_omitted"] > 0
 

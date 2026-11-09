@@ -35,13 +35,20 @@ class PypiMetadata:
 
 
 def _kind(path: str) -> str | None:
-    """``"pkg-info"`` / ``"metadata"`` if ``path`` is a root metadata document."""
-    parent, separator, leaf = path.rpartition("/")
-    if not separator or "/" in parent:
-        return None  # root metadata lives one directory deep, never deeper
+    """``"pkg-info"`` / ``"metadata"`` if ``path`` is a root metadata document.
+
+    The package root is depth 0 for a re-rooted sdist (``PKG-INFO``) and depth 1 for
+    a wheel's ``*.dist-info/METADATA`` (or an un-re-rooted sdist's ``<dir>/PKG-INFO``);
+    anything deeper is a nested copy, not this package's own declaration.
+    """
+    parts = path.split("/")
+    depth = len(parts) - 1
+    if depth > 1:
+        return None
+    leaf = parts[-1]
     if leaf == _PKG_INFO:
         return "pkg-info"
-    if leaf == _METADATA and parent.endswith(_DIST_INFO_SUFFIX):
+    if leaf == _METADATA and (depth == 0 or parts[-2].endswith(_DIST_INFO_SUFFIX)):
         return "metadata"
     return None
 

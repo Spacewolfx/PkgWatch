@@ -34,15 +34,17 @@ def _ctx(
     )
 
 
-def test_sdist_side_resolves_pkg_info_under_its_own_root(tmp_path: Path) -> None:
+def test_sdist_side_resolves_pkg_info_after_re_rooting(tmp_path: Path) -> None:
     ctx = _ctx(
         tmp_path,
         {"demo-1.0.0/PKG-INFO": build_metadata("demo", "1.0.0").encode()},
         {"demo-1.1.0/PKG-INFO": build_metadata("demo", "1.1.0").encode()},
     )
 
-    assert root_metadata_path(ctx, "old") == "demo-1.0.0/PKG-INFO"
-    assert root_metadata_path(ctx, "new") == "demo-1.1.0/PKG-INFO"
+    # The {name}-{version}/ root is stripped before diffing, so both sides' metadata
+    # document is the same depth-0 path.
+    assert root_metadata_path(ctx, "old") == "PKG-INFO"
+    assert root_metadata_path(ctx, "new") == "PKG-INFO"
     assert "Version: 1.0.0" in (metadata_text(ctx, "old") or "")
     assert "Version: 1.1.0" in (metadata_text(ctx, "new") or "")
 
@@ -50,8 +52,14 @@ def test_sdist_side_resolves_pkg_info_under_its_own_root(tmp_path: Path) -> None
 def test_wheel_side_resolves_dist_info_metadata(tmp_path: Path) -> None:
     ctx = _ctx(
         tmp_path,
-        {"demo-1.0.0.dist-info/METADATA": build_metadata("demo", "1.0.0").encode()},
-        {"demo-1.1.0.dist-info/METADATA": build_metadata("demo", "1.1.0").encode()},
+        {
+            "demo/__init__.py": b"",
+            "demo-1.0.0.dist-info/METADATA": build_metadata("demo", "1.0.0").encode(),
+        },
+        {
+            "demo/__init__.py": b"",
+            "demo-1.1.0.dist-info/METADATA": build_metadata("demo", "1.1.0").encode(),
+        },
     )
 
     assert root_metadata_path(ctx, "old") == "demo-1.0.0.dist-info/METADATA"

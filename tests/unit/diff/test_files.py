@@ -309,3 +309,50 @@ def test_renames_are_reported_as_remove_plus_add_in_m2(tmp_path: Path) -> None:
         "package/new_name.js": ChangeType.ADDED,
         "package/old_name.js": ChangeType.REMOVED,
     }
+
+
+def _build_pypi(
+    tmp_path: Path,
+    old_entries: list[Entry],
+    new_entries: list[Entry],
+) -> DiffContext:
+    case = Path(tempfile.mkdtemp(dir=tmp_path))
+    old = extract_tree(case, "old", old_entries)
+    new = extract_tree(case, "new", new_entries)
+    return build_diff_context(
+        ecosystem=Ecosystem.PYPI,
+        package_name="requests",
+        old_version="2.31.0",
+        new_version="2.32.0",
+        published_at=PUBLISHED,
+        old=old,
+        new=new,
+        limits=SandboxLimits(),
+    )
+
+
+def test_pypi_sdist_version_roots_are_stripped_before_diffing(tmp_path: Path) -> None:
+    """An sdist root {name}-{version}/ differs per version; diff on the path inside it.
+
+    Regression for the silent no-op bug: without stripping, requests-2.31.0/... and
+    requests-2.32.0/... share no path, so everything looks added+removed and a version
+    bump reports modified=0.
+    """
+    ctx = _build_pypi(
+        tmp_path,
+        [
+            Entry("requests-2.31.0/PKG-INFO", b"Metadata-Version: 2.1\nVersion: 2.31.0\n"),
+            Entry("requests-2.31.0/requests/utils.py", b"VALUE = 1\n"),
+            Entry("requests-2.31.0/requests/keep.py", b"SAME = 1\n"),
+        ],
+        [
+            Entry("requests-2.32.0/PKG-INFO", b"Metadata-Version: 2.1\nVersion: 2.32.0\n"),
+            Entry("requests-2.32.0/requests/utils.py", b"VALUE = 2\n"),
+            Entry("requests-2.32.0/requests/keep.py", b"SAME = 1\n"),
+        ],
+    )
+    assert types(ctx) == {
+        "PKG-INFO": ChangeType.MODIFIED,
+        "requests/utils.py": ChangeType.MODIFIED,
+        "requests/keep.py": ChangeType.UNCHANGED,
+    }

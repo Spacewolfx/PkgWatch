@@ -103,6 +103,11 @@ def build_diff_context(
     obfuscation: ObfuscationLimits | None = None,
 ) -> DiffContext:
     """Compare two extracted trees into the one object a rule is allowed to read."""
+    if ecosystem is Ecosystem.PYPI:
+        # An sdist unpacks under a single {name}-{version}/ root that differs per
+        # version; re-root both trees so the same inner path compares to itself.
+        old = _re_root(old)
+        new = _re_root(new)
     old_entries = _by_path(old.entries)
     new_entries = _by_path(new.entries)
     budget = _Budget(limits.max_total_uncompressed_bytes)
@@ -156,6 +161,47 @@ def build_diff_context(
 def _by_path(entries: Sequence[ManifestEntry]) -> dict[str, ManifestEntry]:
     """Directory rows carry no content, so they are not file changes."""
     return {entry.path: entry for entry in entries if entry.kind is not ManifestKind.DIR}
+
+
+def _common_top_dir(entries: Sequence[ManifestEntry]) -> str | None:
+    """The single top-level directory every file sits under (an sdist root), or None.
+
+    A wheel's files live at the archive root, so there is no single top directory and
+    nothing is stripped. Requiring *every* file to be strictly under the one directory
+    keeps a malformed archive (a file at the root beside a directory) from being
+    mis-re-rooted.
+    """
+    tops: set[str] = set()
+    for entry in entries:
+        if entry.kind is ManifestKind.DIR:
+            continue
+        tops.add(entry.path.split("/", 1)[0])
+        if len(tops) > 1:
+            return None
+    if not tops:
+        return None
+    top = tops.pop()
+    prefix = top + "/"
+    if any(
+        entry.kind is not ManifestKind.DIR and not entry.path.startswith(prefix)
+        for entry in entries
+    ):
+        return None
+    return top
+
+
+def _re_root(result: ExtractionResult) -> ExtractionResult:
+    """Re-root a tree on its single top directory, or return it unchanged."""
+    top = _common_top_dir(result.entries)
+    if top is None:
+        return result
+    prefix = top + "/"
+    entries = tuple(
+        entry.model_copy(update={"path": entry.path[len(prefix) :]})
+        for entry in result.entries
+        if entry.path != top
+    )
+    return result.model_copy(update={"root": result.root / top, "entries": entries})
 
 
 class _Budget:

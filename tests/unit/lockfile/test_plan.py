@@ -11,9 +11,11 @@ import pytest
 from pkgwatch.config import LockConfig
 from pkgwatch.lockfile import (
     ChangedPair,
+    LockEntry,
     LockfileError,
     LockfileErrorCode,
     NewPackage,
+    ParsedLockfile,
     PlanSide,
     PlanSkip,
     SkipReason,
@@ -219,7 +221,45 @@ def test_a_changed_pair_with_one_unsupported_side_is_not_analysed(tmp_path: Path
     )
 
 
-def test_multiple_versions_are_not_paired_without_a_version_order(tmp_path: Path) -> None:
+def test_balanced_multi_version_names_pair_index_wise_in_version_order(tmp_path: Path) -> None:
+    # SPEC §6.4: the changed sets are equal in size, so version order decides the pairing
+    # lowest→lowest. Insertion order in the JSON is the reverse, to prove the sort happens.
+    old = _parsed(
+        tmp_path,
+        "old.json",
+        {
+            "node_modules/a/node_modules/a": {
+                "version": "2.0.0",
+                "resolved": _resolved("a", "2"),
+            },
+            "node_modules/a": {"version": "1.0.0", "resolved": _resolved("a", "1")},
+        },
+    )
+    new = _parsed(
+        tmp_path,
+        "new.json",
+        {
+            "node_modules/a/node_modules/a": {
+                "version": "2.1.0",
+                "resolved": _resolved("a", "2.1"),
+            },
+            "node_modules/a": {"version": "1.1.0", "resolved": _resolved("a", "1.1")},
+        },
+    )
+
+    plan = plan_lock_update(old, new, limits=LockConfig())
+
+    assert plan.changed_pairs == (
+        ChangedPair(name="a", old_version="1.0.0", new_version="1.1.0"),
+        ChangedPair(name="a", old_version="2.0.0", new_version="2.1.0"),
+    )
+    assert plan.unanalysed == ()
+    assert plan.skipped == ()
+
+
+def test_balanced_changed_subset_of_a_multi_version_name_pairs(tmp_path: Path) -> None:
+    # The 2.0.0 entry exists on both sides; only 1.0.0 (gone) and 3.0.0 (new) changed,
+    # and those two form a balanced one-element pairing.
     old = _parsed(
         tmp_path,
         "old.json",
@@ -245,6 +285,31 @@ def test_multiple_versions_are_not_paired_without_a_version_order(tmp_path: Path
 
     plan = plan_lock_update(old, new, limits=LockConfig())
 
+    assert plan.changed_pairs == (ChangedPair(name="a", old_version="1.0.0", new_version="3.0.0"),)
+    assert plan.unanalysed == ()
+    assert plan.skipped == ()
+
+
+def test_unbalanced_multi_version_sets_keep_multiple_versions(tmp_path: Path) -> None:
+    old = _parsed(
+        tmp_path,
+        "old.json",
+        {"node_modules/a": {"version": "1.0.0", "resolved": _resolved("a", "1")}},
+    )
+    new = _parsed(
+        tmp_path,
+        "new.json",
+        {
+            "node_modules/a": {"version": "1.1.0", "resolved": _resolved("a", "1.1")},
+            "node_modules/a/node_modules/a": {
+                "version": "2.0.0",
+                "resolved": _resolved("a", "2"),
+            },
+        },
+    )
+
+    plan = plan_lock_update(old, new, limits=LockConfig())
+
     assert plan.changed_pairs == ()
     assert plan.unanalysed == (
         UnanalysedPackage(
@@ -264,7 +329,92 @@ def test_multiple_versions_are_not_paired_without_a_version_order(tmp_path: Path
         PlanSkip(
             side=PlanSide.NEW,
             name="a",
-            version="3.0.0",
+            version="1.1.0",
+            reason=SkipReason.MULTIPLE_VERSIONS,
+        ),
+        PlanSkip(
+            side=PlanSide.NEW,
+            name="a",
+            version="2.0.0",
+            reason=SkipReason.MULTIPLE_VERSIONS,
+        ),
+    )
+
+
+def test_balanced_pair_with_an_unsupported_source_stays_unanalysed(tmp_path: Path) -> None:
+    old = _parsed(
+        tmp_path,
+        "old.json",
+        {
+            "node_modules/a": {"version": "1.0.0", "resolved": _resolved("a", "1")},
+            "node_modules/a/node_modules/a": {
+                "version": "2.0.0",
+                "resolved": _resolved("a", "2"),
+            },
+        },
+    )
+    new = _parsed(
+        tmp_path,
+        "new.json",
+        {
+            "node_modules/a": {"version": "1.1.0", "resolved": _resolved("a", "1.1")},
+            "node_modules/a/node_modules/a": {
+                "version": "2.1.0",
+                "resolved": "git+https://github.com/owner/a.git",
+            },
+        },
+    )
+
+    plan = plan_lock_update(old, new, limits=LockConfig())
+
+    assert plan.changed_pairs == (ChangedPair(name="a", old_version="1.0.0", new_version="1.1.0"),)
+    assert plan.unanalysed == (
+        UnanalysedPackage(
+            name="a",
+            old_version="2.0.0",
+            new_version="2.1.0",
+            reason=SkipReason.GIT_SOURCE,
+        ),
+    )
+    assert plan.skipped == (
+        PlanSkip(
+            side=PlanSide.OLD,
+            name="a",
+            version="2.0.0",
+            reason=SkipReason.PAIR_SOURCE_UNSUPPORTED,
+        ),
+        PlanSkip(side=PlanSide.NEW, name="a", version="2.1.0", reason=SkipReason.GIT_SOURCE),
+    )
+
+
+def test_unparseable_version_in_a_multi_version_name_falls_back() -> None:
+    # The parser validates versions, so this is only reachable through a directly built
+    # ParsedLockfile; the plan must not guess an order it cannot parse.
+    old = ParsedLockfile(
+        lockfile_version=3,
+        entries=(
+            LockEntry(name="a", version="1.0.0", resolved=_resolved("a", "1")),
+            LockEntry(name="a", version="bogus", resolved=_resolved("a", "bogus")),
+        ),
+        skipped=(),
+    )
+    new = ParsedLockfile(
+        lockfile_version=3,
+        entries=(
+            LockEntry(name="a", version="2.0.0", resolved=_resolved("a", "2")),
+            LockEntry(name="a", version="3.0.0", resolved=_resolved("a", "3")),
+        ),
+        skipped=(),
+    )
+
+    plan = plan_lock_update(old, new, limits=LockConfig())
+
+    assert plan.changed_pairs == ()
+    assert plan.unanalysed == (
+        UnanalysedPackage(
+            name="a",
+            old_version=None,
+            new_version=None,
             reason=SkipReason.MULTIPLE_VERSIONS,
         ),
     )

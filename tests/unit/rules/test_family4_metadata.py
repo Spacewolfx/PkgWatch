@@ -202,12 +202,13 @@ def test_a_malformed_root_manifest_is_a_parse_problem_not_a_crash(tmp_path: Path
     assert [error.detail for error in errors] == [MANIFEST_INVALID_JSON]
 
 
-def test_family_four_ships_only_the_two_implemented_rules() -> None:
+def test_family_four_ships_the_implemented_metadata_rules() -> None:
     family = [rule for rule in RULES if RuleFamily.METADATA in rule.families]
     assert [rule.rule_id for rule in family] == [
         "DEPENDENCY_ADDED",
         "REPOSITORY_URL_CHANGED",
+        "PYPI_DEPENDENCY_ADDED",
     ]
-    assert [rule.severity for rule in family] == [Severity.LOW, Severity.MEDIUM]
+    assert [rule.severity for rule in family] == [Severity.LOW, Severity.MEDIUM, Severity.LOW]
     assert all(rule.rule_version == 1 for rule in family)
     assert "MAINTAINER_ADDED" not in {rule.rule_id for rule in RULES}

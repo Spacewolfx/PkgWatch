@@ -15,7 +15,13 @@ from typing import Any
 from pkgwatch.models import DiffContext, DiffLineOp, FileView, Finding, Severity
 
 JS_SUFFIXES = (".js", ".jsx", ".mjs", ".cjs")
+PYPI_SUFFIXES = (".py",)
 ROOT_MANIFEST = "package/package.json"
+
+# PyPI build manifests: an install hook is declared here, not in a module. Depth is
+# measured in directories under the extraction root, so a build file two directories
+# down is still the package's own, not a vendored copy's.
+PYPI_BUILD_FILES = ("setup.py", "pyproject.toml", "setup.cfg")
 
 FULL_SCAN = "full"
 PARTIAL_SCAN = "partial"
@@ -89,11 +95,13 @@ def old_tree_state(ctx: DiffContext) -> str:
     return FULL_SCAN
 
 
-def old_tree_has_capability(ctx: DiffContext, item: Pattern) -> bool:
+def old_tree_has_capability(
+    ctx: DiffContext, item: Pattern, suffixes: Sequence[str] = JS_SUFFIXES
+) -> bool:
     """SPEC §4.5: "absent before" is decided against the whole old tree, not one file."""
     return any(
         item.regex.search(line)
-        for view in text_views(ctx.files_old.values())
+        for view in text_views(ctx.files_old.values(), suffixes=suffixes)
         for line in view.content.splitlines()
     )
 
@@ -105,6 +113,7 @@ def capability_findings(
     rule_version: int,
     severity: Severity,
     patterns: Sequence[Pattern],
+    suffixes: Sequence[str] = JS_SUFFIXES,
 ) -> list[Finding]:
     """Findings for added lines that introduce a capability the old tree lacked.
 
@@ -112,7 +121,7 @@ def capability_findings(
     that reads as two capabilities is reported once.
     """
     hits: list[tuple[int, str, str, Pattern]] = []
-    for view in text_views(ctx.files_new.values()):
+    for view in text_views(ctx.files_new.values(), suffixes=suffixes):
         for number, text in added_lines(view):
             for item in patterns:
                 if item.regex.search(text):
@@ -120,7 +129,7 @@ def capability_findings(
                     break
 
     scan = old_tree_state(ctx)
-    present = {item.name: old_tree_has_capability(ctx, item) for item in patterns}
+    present = {item.name: old_tree_has_capability(ctx, item, suffixes) for item in patterns}
     findings: list[Finding] = []
     for number, text, path, item in sorted(hits, key=lambda hit: (hit[2], hit[0])):
         if present[item.name]:
@@ -139,6 +148,40 @@ def capability_findings(
             )
         )
     return findings
+
+
+def is_build_file(path: str) -> bool:
+    """A PyPI build manifest of this package: a known name at depth <= 2."""
+    if path.count("/") > 2:
+        return False
+    return path.rpartition("/")[2].lower() in PYPI_BUILD_FILES
+
+
+def build_file_views(views: Iterable[FileView]) -> list[FileView]:
+    """Text views of the package's own build manifests, in path order."""
+    return [
+        view
+        for view in sorted(views, key=lambda item: item.path)
+        if view.is_text and is_build_file(view.path)
+    ]
+
+
+def build_file_additions(ctx: DiffContext) -> list[tuple[str, int, str]]:
+    """``(path, 1-based new line, text)`` for added lines of the new tree's build files."""
+    return [
+        (view.path, number, text)
+        for view in build_file_views(ctx.files_new.values())
+        for number, text in added_lines(view)
+    ]
+
+
+def old_build_files_have(ctx: DiffContext, item: Pattern) -> bool:
+    """Whether an install-hook pattern already appeared in the old tree's build files."""
+    return any(
+        item.regex.search(line)
+        for view in build_file_views(ctx.files_old.values())
+        for line in view.content.splitlines()
+    )
 
 
 def root_manifest_additions(ctx: DiffContext) -> list[tuple[int, str]]:

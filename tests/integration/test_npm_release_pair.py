@@ -208,7 +208,7 @@ def test_scored_installer_is_stored_and_read_back(tmp_path: Path, repo: Reposito
     assert repo.remove_watch(Ecosystem.NPM, "demo-pkg") is True
 
 
-def test_the_registry_offers_twelve_rules_and_a_stable_set_version() -> None:
+def test_the_registry_offers_eighteen_rules_and_a_stable_set_version() -> None:
     assert [rule.rule_id for rule in RULES] == [
         "NPM_INSTALL_SCRIPT_ADDED",
         "NPM_SCRIPT_INJECTION_FROM_METADATA",
@@ -222,5 +222,11 @@ def test_the_registry_offers_twelve_rules_and_a_stable_set_version() -> None:
         "HEX_ESCAPE_DENSITY",
         "DEPENDENCY_ADDED",
         "REPOSITORY_URL_CHANGED",
+        "PYPI_INSTALL_HOOK_ADDED",
+        "PYPI_SHELL_EXEC_ADDED",
+        "PYPI_EVAL_EXEC_ADDED",
+        "PYPI_NET_ACCESS_ADDED",
+        "PYPI_ENV_ENUM_ADDED",
+        "PYPI_DEPENDENCY_ADDED",
     ]
     assert len(rule_set_version()) == 12

@@ -352,9 +352,9 @@ def test_installer_sdist_pair_exits_one_with_pypi_findings(
         {"name": "lifecycle_plus_capability", "points": 20},
     ]
     by_id = {item["rule_id"]: item for item in payload["findings"]}
-    assert by_id["PYPI_INSTALL_HOOK_ADDED"]["path"] == "demo-pkg-1.1.0/setup.py"
+    assert by_id["PYPI_INSTALL_HOOK_ADDED"]["path"] == "setup.py"
     assert by_id["PYPI_INSTALL_HOOK_ADDED"]["evidence"] == 'setup(name="demo")'
-    assert by_id["PYPI_SHELL_EXEC_ADDED"]["path"] == "demo-pkg-1.1.0/demo/shell.py"
+    assert by_id["PYPI_SHELL_EXEC_ADDED"]["path"] == "demo/shell.py"
 
 
 def test_installer_in_text_mode_lists_the_findings(
@@ -365,8 +365,8 @@ def test_installer_in_text_mode_lists_the_findings(
 
     assert code == 1
     assert err == ""
-    assert "PYPI_INSTALL_HOOK_ADDED high demo-pkg-1.1.0/setup.py:2" in out
-    assert "PYPI_SHELL_EXEC_ADDED high demo-pkg-1.1.0/demo/shell.py:2" in out
+    assert "PYPI_INSTALL_HOOK_ADDED high setup.py:2" in out
+    assert "PYPI_SHELL_EXEC_ADDED high demo/shell.py:2" in out
     assert "score: 100" in out
     assert DISCLAIMER in out
 

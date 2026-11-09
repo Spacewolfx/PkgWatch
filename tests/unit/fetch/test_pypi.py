@@ -1,0 +1,311 @@
+"""PyPI fetch layer: document URL, PEP 503 names, host allowlist, artifact selection.
+
+Everything is served by the offline ``PyPIRegistry`` double; no test touches the network.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from pkgwatch.config import Config
+from pkgwatch.fetch.npm import FetchError, FetchErrorCode
+from pkgwatch.fetch.pypi import (
+    build_doc_url,
+    fetch_pair_pypi,
+    is_pypi_url,
+    normalize_name,
+    parse_spec,
+    validate_name_pypi,
+)
+from tests.support.pypi_registry import (
+    PyPIRegistry,
+    pypi_pair_registry,
+    sdist_bytes,
+    wheel_bytes,
+)
+
+CONFIG = Config()
+
+
+def _fetch(tmp_path: Path, registry: PyPIRegistry):  # type: ignore[no-untyped-def]
+    workdir = tmp_path / "work"
+    workdir.mkdir(exist_ok=True)
+    return fetch_pair_pypi(
+        name=registry.name,
+        old_version="1.0.0",
+        new_version="1.1.0",
+        config=CONFIG,
+        client=registry,
+        workdir=workdir,
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "normalized"),
+    [("foo-bar", "foo-bar"), ("Foo_Bar", "foo-bar"), ("foo.bar", "foo-bar"), ("A__B..C", "a-b-c")],
+)
+def test_pep503_normalization(name: str, normalized: str) -> None:
+    assert normalize_name(name) == normalized
+
+
+def test_doc_url_uses_the_normalized_name() -> None:
+    assert build_doc_url("Foo_Bar") == "https://pypi.org/pypi/foo-bar/json"
+
+
+@pytest.mark.parametrize("name", ["foo", "foo.bar", "Foo_Bar", "f1", "a-b", "x" * 100])
+def test_valid_names(name: str) -> None:
+    validate_name_pypi(name)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "",
+        "-foo",
+        "foo-",
+        ".foo",
+        "foo.",
+        "foo/bar",
+        "foo\\bar",
+        "..",
+        "foo bar",
+        "foo\x00bar",
+        "föö",
+        "x" * 215,
+    ],
+)
+def test_invalid_names(name: str) -> None:
+    with pytest.raises(FetchError) as caught:
+        validate_name_pypi(name)
+    assert caught.value.code is FetchErrorCode.INVALID_PACKAGE_NAME
+
+
+def test_parse_spec_accepts_only_the_pypi_prefix() -> None:
+    assert parse_spec("pypi:foo@1.0") == ("foo", "1.0")
+    assert parse_spec("pypi:Foo_Bar@2!1.0.post1") == ("Foo_Bar", "2!1.0.post1")
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["npm:foo@1.0.0", "foo@1.0.0", "pypi:foo", "pypi:@1.0", "pypi:foo@", "pypi:foo@bogus"],
+)
+def test_parse_spec_rejects_everything_else(text: str) -> None:
+    with pytest.raises(FetchError):
+        parse_spec(text)
+
+
+@pytest.mark.parametrize(
+    ("url", "allowed"),
+    [
+        ("https://pypi.org/pypi/foo/json", True),
+        ("https://files.pythonhosted.org/packages/aa/bb/foo.tar.gz", True),
+        ("http://pypi.org/pypi/foo/json", False),
+        ("https://evil.example/foo.tar.gz", False),
+        ("https://pypi.org:8443/pypi/foo/json", False),
+        ("https://user@pypi.org/pypi/foo/json", False),
+        ("https://pypi.org.evil.example/foo", False),
+    ],
+)
+def test_host_allowlist(url: str, allowed: bool) -> None:
+    assert is_pypi_url(url) is allowed
+
+
+def test_sdist_is_preferred_over_wheel(tmp_path: Path) -> None:
+    registry = PyPIRegistry(name="demo")
+    old = sdist_bytes(tmp_path, "demo", "1.0.0", {"demo/__init__.py": b""})
+    new = sdist_bytes(tmp_path, "demo", "1.1.0", {"demo/__init__.py": b""})
+    wheel = wheel_bytes(tmp_path, "demo", "1.1.0", {"demo/__init__.py": b""})
+    registry.add_release("1.0.0", old)
+    # The wheel is listed first; the sdist must still win.
+    registry.add_release("1.1.0", wheel, packagetype="bdist_wheel")
+    registry.add_release("1.1.0", new, packagetype="sdist")
+
+    pair = _fetch(tmp_path, registry)
+
+    assert pair.new.path.name.endswith(".tar.gz")
+    assert pair.new.digest_method == "sha256"
+    assert pair.old.path.name.endswith(".tar.gz")
+
+
+def test_wheel_only_version_is_used(tmp_path: Path) -> None:
+    registry = pypi_pair_registry(
+        tmp_path,
+        "demo",
+        old_version="1.0.0",
+        new_version="1.1.0",
+        old_files={"demo/__init__.py": b""},
+        new_files={"demo/__init__.py": b""},
+        old_packagetype="bdist_wheel",
+        new_packagetype="bdist_wheel",
+    )
+
+    pair = _fetch(tmp_path, registry)
+
+    assert pair.old.path.name.endswith(".whl")
+    assert pair.new.path.name.endswith(".whl")
+
+
+def test_published_at_comes_from_the_file_entry(tmp_path: Path) -> None:
+    registry = pypi_pair_registry(
+        tmp_path,
+        "demo",
+        old_version="1.0.0",
+        new_version="1.1.0",
+        old_files={},
+        new_files={},
+    )
+
+    pair = _fetch(tmp_path, registry)
+
+    assert pair.old.published_at.isoformat().startswith("2026-11-01")
+    assert pair.new.published_at.isoformat().startswith("2026-11-05")
+
+
+def test_version_without_usable_files_is_artifact_unavailable(tmp_path: Path) -> None:
+    registry = pypi_pair_registry(
+        tmp_path,
+        "demo",
+        old_version="1.0.0",
+        new_version="1.1.0",
+        old_files={},
+        new_files={},
+    )
+    registry.releases["1.1.0"] = [
+        {
+            "filename": "demo-1.1.0.egg",
+            "url": registry.artifact_url("demo-1.1.0.egg"),
+            "packagetype": "egg",
+            "digests": {"sha256": "0" * 64},
+        }
+    ]
+
+    with pytest.raises(FetchError) as caught:
+        _fetch(tmp_path, registry)
+
+    assert caught.value.code is FetchErrorCode.ARTIFACT_UNAVAILABLE
+
+
+def test_unknown_version_is_version_not_found(tmp_path: Path) -> None:
+    registry = pypi_pair_registry(
+        tmp_path,
+        "demo",
+        old_version="1.0.0",
+        new_version="1.1.0",
+        old_files={},
+        new_files={},
+    )
+    del registry.releases["1.1.0"]
+
+    with pytest.raises(FetchError) as caught:
+        _fetch(tmp_path, registry)
+
+    assert caught.value.code is FetchErrorCode.VERSION_NOT_FOUND
+
+
+def test_artifact_url_off_the_allowlist_is_rejected(tmp_path: Path) -> None:
+    registry = pypi_pair_registry(
+        tmp_path,
+        "demo",
+        old_version="1.0.0",
+        new_version="1.1.0",
+        old_files={},
+        new_files={},
+    )
+    entry = registry.releases["1.1.0"][0]
+    del registry.artifacts[entry["url"]]
+    entry["url"] = "https://evil.example/demo-1.1.0.tar.gz"
+
+    with pytest.raises(FetchError) as caught:
+        _fetch(tmp_path, registry)
+
+    assert caught.value.code is FetchErrorCode.TARBALL_URL_INVALID
+
+
+@pytest.mark.parametrize(
+    ("digest", "code"),
+    [
+        ("none", FetchErrorCode.DIGEST_MISSING),
+        ("md5", FetchErrorCode.DIGEST_UNSUPPORTED),
+        ("corrupt", FetchErrorCode.DIGEST_MISMATCH),
+    ],
+)
+def test_digest_failures_use_stable_codes(
+    tmp_path: Path, digest: str, code: FetchErrorCode
+) -> None:
+    registry = PyPIRegistry(name="demo")
+    old = sdist_bytes(tmp_path, "demo", "1.0.0", {})
+    new = sdist_bytes(tmp_path, "demo", "1.1.0", {})
+    registry.add_release("1.0.0", old)
+    registry.add_release("1.1.0", new, digest=digest)
+
+    with pytest.raises(FetchError) as caught:
+        _fetch(tmp_path, registry)
+
+    assert caught.value.code is code
+
+
+def test_blake2b_only_digest_is_accepted(tmp_path: Path) -> None:
+    registry = PyPIRegistry(name="demo")
+    old = sdist_bytes(tmp_path, "demo", "1.0.0", {})
+    new = sdist_bytes(tmp_path, "demo", "1.1.0", {})
+    registry.add_release("1.0.0", old)
+    registry.add_release("1.1.0", new, digest="blake2b_256")
+
+    pair = _fetch(tmp_path, registry)
+
+    assert pair.new.digest_method == "blake2b_256"
+
+
+def test_redirect_off_the_allowlist_is_rejected(tmp_path: Path) -> None:
+    registry = pypi_pair_registry(
+        tmp_path,
+        "demo",
+        old_version="1.0.0",
+        new_version="1.1.0",
+        old_files={},
+        new_files={},
+    )
+    url = registry.releases["1.1.0"][0]["url"]
+    registry.redirects[url] = "https://evil.example/payload"
+
+    with pytest.raises(FetchError) as caught:
+        _fetch(tmp_path, registry)
+
+    assert caught.value.code is FetchErrorCode.REDIRECT_REJECTED
+
+
+def test_malformed_document_is_registry_doc_invalid(tmp_path: Path) -> None:
+    registry = pypi_pair_registry(
+        tmp_path,
+        "demo",
+        old_version="1.0.0",
+        new_version="1.1.0",
+        old_files={},
+        new_files={},
+    )
+    registry.doc_override = b"{not json"
+
+    with pytest.raises(FetchError) as caught:
+        _fetch(tmp_path, registry)
+
+    assert caught.value.code is FetchErrorCode.REGISTRY_DOC_INVALID
+
+
+def test_only_the_document_endpoint_is_on_pypi_org(tmp_path: Path) -> None:
+    registry = pypi_pair_registry(
+        tmp_path,
+        "demo",
+        old_version="1.0.0",
+        new_version="1.1.0",
+        old_files={},
+        new_files={},
+    )
+
+    _fetch(tmp_path, registry)
+
+    assert registry.requests[0] == "https://pypi.org/pypi/demo/json"
+    assert all(
+        request.startswith("https://files.pythonhosted.org/") for request in registry.requests[1:]
+    )

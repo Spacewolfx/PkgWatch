@@ -30,6 +30,7 @@ from pkgwatch.diff.manifest import (
     diff_root_manifests,
     manifest_parse_errors,
 )
+from pkgwatch.fetch import pypi as pypi_fetch
 from pkgwatch.fetch.cache import DownloadCache, default_cache_dir
 from pkgwatch.fetch.npm import (
     FetchError,
@@ -833,6 +834,27 @@ def _emit_output(
     return True
 
 
+def _route(spec: str) -> tuple[Ecosystem, str, str]:
+    """Resolve one ``compare`` spec to its ecosystem, name and exact version.
+
+    ``pypi:`` routes to the PyPI parser; everything else stays on the npm path, so npm
+    behaviour is unchanged. Each parser validates the name and version before any URL
+    is built, so a bad spec raises a stable ``FetchError`` here, never at the network.
+    """
+    if spec.startswith("pypi:"):
+        name, version = pypi_fetch.parse_spec(spec)
+        return Ecosystem.PYPI, name, version
+    name, version = parse_spec(spec)
+    return Ecosystem.NPM, name, version
+
+
+def _package_identity(ecosystem: Ecosystem, name: str) -> tuple[Ecosystem, str]:
+    """The mismatch key: ecosystem plus the name in its ecosystem's canonical form."""
+    if ecosystem is Ecosystem.PYPI:
+        return ecosystem, pypi_fetch.normalize_name(name)
+    return ecosystem, name
+
+
 def _compare(
     first: str,
     second: str,
@@ -847,27 +869,37 @@ def _compare(
     ignored: Sequence[str],
     experimental: bool = False,
 ) -> tuple[CompareReport, int]:
-    old_name, old_version = parse_spec(first)
-    new_name, new_version = parse_spec(second)
-    if old_name != new_name:
+    ecosystem, old_name, old_version = _route(first)
+    _new_ecosystem, new_name, new_version = _route(second)
+    if _package_identity(ecosystem, old_name) != _package_identity(_new_ecosystem, new_name):
         raise CompareError(FetchErrorCode.PACKAGE_MISMATCH.value)
 
     # Temp files and temp extraction roots only: no writes to data/ or the store.
     # TODO(v0.2): ARCHITECTURE §2's content-addressed caches are a later optimisation.
     with tempfile.TemporaryDirectory(prefix="pkgwatch-compare-") as temporary:
         workdir = Path(temporary)
-        pair = fetch_pair(
-            name=old_name,
-            old_version=old_version,
-            new_version=new_version,
-            config=config,
-            client=client,
-            workdir=workdir,
-        )
+        if ecosystem is Ecosystem.PYPI:
+            pair = pypi_fetch.fetch_pair_pypi(
+                name=old_name,
+                old_version=old_version,
+                new_version=new_version,
+                config=config,
+                client=client,
+                workdir=workdir,
+            )
+        else:
+            pair = fetch_pair(
+                name=old_name,
+                old_version=old_version,
+                new_version=new_version,
+                config=config,
+                client=client,
+                workdir=workdir,
+            )
         old_tree = _extract(pair.old.path, workdir / "extract-old", config)
         new_tree = _extract(pair.new.path, workdir / "extract-new", config)
         ctx = build_diff_context(
-            ecosystem=Ecosystem.NPM,
+            ecosystem=ecosystem,
             package_name=old_name,
             old_version=old_version,
             new_version=new_version,
@@ -920,6 +952,7 @@ def _compare(
             old_name,
             old_version,
             new_version,
+            ecosystem=ecosystem,
             pair=pair,
             changes=ctx.changes,
             display=display,
@@ -1053,6 +1086,7 @@ def _report(
     old_version: str,
     new_version: str,
     *,
+    ecosystem: Ecosystem,
     pair: FetchPair,
     changes: Sequence[FileChange],
     display: Sequence[Finding],
@@ -1065,7 +1099,7 @@ def _report(
 ) -> CompareReport:
     return CompareReport(
         schema_version=COMPARE_JSON_SCHEMA_VERSION,
-        ecosystem=Ecosystem.NPM.value,
+        ecosystem=ecosystem.value,
         package=name,
         old_version=old_version,
         new_version=new_version,
@@ -1301,6 +1335,7 @@ def _format_compare_markdown(report: CompareReport) -> str:
     lines = [
         f"## pkgwatch compare: `{pkg}` (`{old_v}` -> `{new_v}`)",
         "",
+        f"- **Ecosystem:** `{_md_escape(report['ecosystem'])}`",
         f"- **Risk Score:** `{report['score']}` (rule set `{report['rule_set_version']}`)",
         f"- **Files:** `+{files['added']}` added, "
         f"`-{files['removed']}` removed, `~{files['modified']}` modified",
@@ -1443,6 +1478,7 @@ def _format_compare_sarif(report: CompareReport) -> dict[str, Any]:
                     }
                 },
                 "properties": {
+                    "ecosystem": report["ecosystem"],
                     "package": report["package"],
                     "old_version": report["old_version"],
                     "new_version": report["new_version"],

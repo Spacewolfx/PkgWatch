@@ -48,8 +48,20 @@ pkgwatch compare npm:<name>@<old> npm:<name>@<new> [--json] [--fail-on LEVEL]
   watchlists, feeds, schedulers, store writes, model code or dataset code. The
   `lock` command covers npm lockfiles only; PyPI lock support is not implemented.
 - **Detection quality has not been measured.** Findings are signals for human review, not
-  proof of malicious behaviour. The score is an ordering, not a verdict. The v0.2
-  severities and `[obfuscation]` thresholds are starting values, not tuned or measured.
+  proof of malicious behaviour. The score is an ordering, not a verdict. Every severity
+  and every `[obfuscation]` threshold below is an operator decision, an initial untuned
+  value, not measured. Coverage, by ecosystem and family:
+
+  | Ecosystem | Family 1 lifecycle | Family 2 capability | Family 3 obfuscation | Family 4 metadata |
+  |---|---|---|---|---|
+  | npm | `NPM_INSTALL_SCRIPT_ADDED`, `NPM_SCRIPT_INJECTION_FROM_METADATA` | `JS_CHILD_PROCESS_ADDED`, `DYNAMIC_EVAL_ADDED`, `NET_ACCESS_ADDED`, `FS_WRITE_OUTSIDE_PACKAGE_ADDED`, `ENV_ENUMERATION_ADDED` | `BASE64_BLOB_PRESENT`, `HIGH_ENTROPY_STRINGS`, `HEX_ESCAPE_DENSITY` (experimental) | `DEPENDENCY_ADDED` (experimental), `REPOSITORY_URL_CHANGED` (experimental) |
+  | PyPI | `PYPI_INSTALL_HOOK_ADDED` | `PYPI_SHELL_EXEC_ADDED`, `PYPI_EVAL_EXEC_ADDED`, `PYPI_NET_ACCESS_ADDED`, `PYPI_ENV_ENUM_ADDED` | — (no PyPI family-3 rules) | `PYPI_DEPENDENCY_ADDED` (experimental) |
+
+  Verified so far: the recorded `requests` 2.31→2.32 pair reports `modified=12` with
+  zero findings (correct for that benign restructure), and a synthetic installer
+  fixture proves every rule fires when there is a real change. Neither ecosystem has
+  been measured against a labelled corpus, so false-positive and false-negative rates
+  are unknown for both.
 - **It will miss obfuscated and runtime behaviour.** Rules read added lines and registry
   metadata; they cannot see code assembled at runtime, behaviour that appears only when
   installed, network traffic, or anything hidden behind encoding. Family 3 reports an
@@ -120,7 +132,9 @@ Scoped names are accepted and percent-encoded (`@scope/pkg` becomes `@scope%2Fpk
 
 ### Recorded output
 
-This is the only real run recorded so far. **2026-11-07**, exact command:
+Two real runs recorded so far.
+
+**2026-11-07**, npm, exact command:
 
 ```text
 $ pkgwatch compare npm:is-number@6.0.0 npm:is-number@7.0.0
@@ -138,8 +152,89 @@ review, not proof of malicious behaviour.
 
 That run was recorded under **v0.1**. Current versions keep every line above and append
 the new sections (changed files, `package.json` changes, registry metadata, JSON schema,
-toml config, `--config`/`--baseline` flows) after it; no post-v0.1 run has been recorded
-yet, so no later output is shown here.
+toml config, `--config`/`--baseline` flows) after it.
+
+**2026-11-09**, PyPI, exact command (`--experimental`):
+
+```text
+$ pkgwatch compare pypi:requests@2.31.0 pypi:requests@2.32.0 --experimental
+package: requests
+old version: 2.31.0
+new version: 2.32.0
+files: added=25, removed=24, modified=12
+findings: (none)
+score: 0
+boosts: (none)
+digests: old=sha256, new=sha256
+changed files:
+  M HISTORY.md 57284 -> 59345
+  M MANIFEST.in 105 -> 94
+  M PKG-INFO 4358 -> 4346
+  M README.md 2922 -> 2929
+  M pyproject.toml 257 -> 238
+  D requests.egg-info/PKG-INFO 4358 -> 0
+  D requests.egg-info/SOURCES.txt 962 -> 0
+  D requests.egg-info/dependency_links.txt 1 -> 0
+  D requests.egg-info/not-zip-safe 1 -> 0
+  D requests.egg-info/requires.txt 160 -> 0
+  D requests.egg-info/top_level.txt 9 -> 0
+  D requests/__init__.py 4963 -> 0
+  D requests/__version__.py 435 -> 0
+  D requests/_internal_utils.py 1495 -> 0
+  D requests/adapters.py 19553 -> 0
+  D requests/api.py 6449 -> 0
+  D requests/auth.py 10187 -> 0
+  D requests/certs.py 429 -> 0
+  D requests/compat.py 1451 -> 0
+  D requests/cookies.py 18560 -> 0
+  D requests/exceptions.py 3811 -> 0
+  D requests/help.py 3875 -> 0
+  D requests/hooks.py 733 -> 0
+  D requests/models.py 35223 -> 0
+  D requests/packages.py 957 -> 0
+  D requests/sessions.py 30373 -> 0
+  D requests/status_codes.py 4235 -> 0
+  D requests/structures.py 2912 -> 0
+  D requests/utils.py 33448 -> 0
+  M requirements-dev.txt 250 -> 92
+  M setup.cfg 360 -> 365
+  M setup.py 3944 -> 3941
+  A src/requests.egg-info/PKG-INFO 0 -> 4346
+  A src/requests.egg-info/SOURCES.txt 0 -> 1081
+  A src/requests.egg-info/dependency_links.txt 0 -> 1
+  A src/requests.egg-info/not-zip-safe 0 -> 1
+  A src/requests.egg-info/requires.txt 0 -> 160
+  A src/requests.egg-info/top_level.txt 0 -> 9
+  A src/requests/__init__.py 0 -> 5072
+  A src/requests/__version__.py 0 -> 435
+  A src/requests/_internal_utils.py 0 -> 1495
+  A src/requests/adapters.py 0 -> 22721
+  A src/requests/api.py 0 -> 6449
+  A src/requests/auth.py 0 -> 10186
+  A src/requests/certs.py 0 -> 429
+  A src/requests/compat.py 0 -> 1817
+  A src/requests/cookies.py 0 -> 18590
+  A src/requests/exceptions.py 0 -> 4260
+  A src/requests/help.py 0 -> 3875
+  A src/requests/hooks.py 0 -> 733
+  ... 11 more
+pypi metadata changes:
+  requires_dist: ["charset-normalizer (<4,>=2)", "idna (<4,>=2.5)", "urllib3 (<3,>=1.21.1)", "certifi (>=2017.4.17)", -> ["charset-normalizer<4,>=2", "idna<4,>=2.5", "urllib3<3,>=1.21.1", "certifi>=2017.4.17", "PySocks!=1
+  requires_python: ">=3.7" -> ">=3.8"
+  classifiers: ["Development Status :: 5 - Production/Stable", "Environment :: Web Environment", "Intended Audience -> ["Development Status :: 5 - Production/Stable", "Environment :: Web Environment", "Intended Audience
+  project_urls: {"Documentation": "https://requests.readthedocs.io", "Homepage": "https://requests.readthedocs.io",  -> {"Documentation": "https://requests.readthedocs.io", "Homepage": "https://requests.readthedocs.io",
+  entry_points: (not available) -> (not available)
+  yanked: false -> true
+  summary: "Python HTTP for Humans." -> "Python HTTP for Humans."
+Detection quality has not been measured. Findings are signals for human review, not proof of malicious behaviour.
+```
+
+Zero findings is correct for this pair: 2.32.0 moved the package from a flat
+`requests/` layout to a `src/` layout and touched metadata, but added no install hook,
+no new capability (moved files' capabilities are suppressed as not-new), and no new
+dependency name. The synthetic installer fixture (`pypi_synthetic_installer`) proves the
+six PyPI rules do fire when there is a real malicious change, so the tool is not
+silently quiet — it is quiet because this pair is benign.
 
 ### Text sections
 
@@ -152,11 +247,14 @@ yet, so no later output is shown here.
 - `package.json changes:` — added/removed/changed entries in `scripts`, `dependencies`,
   `devDependencies`, `optionalDependencies`, `peerDependencies`, plus the `repository`
   field. A malformed root manifest is shown as `parse problem: <side> MANIFEST_INVALID_JSON`
-  and makes the run exit 2 (never a crash).
+  and makes the run exit 2 (never a crash). **npm only.**
 - `registry metadata changes:` — only SPEC §3's `versions[v]` fields (`dependencies`,
   `devDependencies`, `scripts`, `engines`, `os`, `cpu`, `bin`, `dist.size`,
   `dist.fileCount`, `dist.unpackedSize`). An absent field prints `(not available)`; an
-  explicitly null field prints `null`.
+  explicitly null field prints `null`. **npm only.**
+- `pypi metadata changes:` — the per-version PyPI document's `requires_dist`,
+  `requires_python`, `classifiers`, `project_urls`, `entry_points`, `yanked` and
+  `summary`, `old -> new`. Same `(not available)` convention. **PyPI only.**
 - `ignored:` — one line per `--ignore` rule, including rules with zero findings.
 - `explanations:` — only with `--explain`, for rules that fired.
 
@@ -488,9 +586,14 @@ behaviour — `measured: false` everywhere.
 `https://pypi.org/pypi/<name>/json` (PEP 503 name normalisation, so `Demo_Pkg`,
 `demo-pkg` and `demo.pkg` are the same project). Each release's sdist (`.tar.gz`) is
 preferred, else its wheel (`.whl`); both unpack only through the sandbox and digests
-are verified before extraction. Build manifests (`setup.py`, `pyproject.toml`,
-`setup.cfg`) and Python source (`.py`) are read as text only, never executed —
-including `setup.py`, which is analysed statically like everything else.
+are verified before extraction. An sdist's `{name}-{version}/` root is stripped before
+diffing, so the same file across versions compares to itself. Build manifests
+(`setup.py`, `pyproject.toml`, `setup.cfg`) and Python source (`.py`) are read as text
+only, never executed — including `setup.py`, which is analysed statically like
+everything else. Per-version registry metadata (`requires_dist`, `requires_python`,
+`classifiers`, `project_urls`, `entry_points`, `yanked`, `summary`) is fetched from
+`/pypi/<name>/<version>/json` and diffed into `pypi metadata changes`; when it cannot
+be fetched the fields read `(not available)` rather than failing the run.
 
 Six PyPI-specific rules run (SPEC §4.5.2): `PYPI_INSTALL_HOOK_ADDED`
 (lifecycle, high), `PYPI_SHELL_EXEC_ADDED`, `PYPI_EVAL_EXEC_ADDED` (both high),
@@ -498,6 +601,11 @@ Six PyPI-specific rules run (SPEC §4.5.2): `PYPI_INSTALL_HOOK_ADDED`
 `PYPI_DEPENDENCY_ADDED` (metadata, low) — the last is experimental-gated, off by
 default, exactly like npm's `DEPENDENCY_ADDED`. Dependency evidence comes from the
 shipped `PKG-INFO`/`METADATA` document, never from registry metadata.
+
+PyPI support is new but verified end-to-end: the recorded `requests` 2.31→2.32 run
+above reports `modified=12` with zero findings (correct for that benign restructure),
+and a synthetic installer fixture proves all six rules fire on a real malicious
+change. Detection quality is still unmeasured (see the coverage table above).
 
 Not implemented yet: the `lock` command for PyPI, and wheel-binary analysis.
 

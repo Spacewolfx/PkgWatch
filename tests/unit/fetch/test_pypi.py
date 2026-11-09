@@ -311,7 +311,7 @@ def test_document_endpoints_are_on_pypi_org_artifacts_on_files_host(tmp_path: Pa
     artifacts = [r for r in registry.requests if r.startswith("https://files.pythonhosted.org/")]
     assert len(artifacts) == 2
     assert all(
-        r.startswith("https://pypi.org/") or r.startswith("https://files.pythonhosted.org/")
+        r.startswith(("https://pypi.org/", "https://files.pythonhosted.org/"))
         for r in registry.requests
     )
 

@@ -101,6 +101,7 @@ class PyPIRegistry:
     releases: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     artifacts: dict[str, bytes] = field(default_factory=dict)
     doc_override: bytes | None = None
+    version_info: dict[str, dict[str, Any]] = field(default_factory=dict)
     redirects: dict[str, str] = field(default_factory=dict)
     requests: list[str] = field(default_factory=list)
     user_agents: list[str] = field(default_factory=list)
@@ -108,6 +109,9 @@ class PyPIRegistry:
     @property
     def doc_url(self) -> str:
         return build_doc_url(self.name)
+
+    def version_doc_url(self, version: str) -> str:
+        return f"https://{PYPI_HOST}/pypi/{normalize_name(self.name)}/{version}/json"
 
     def artifact_url(self, filename: str) -> str:
         return f"https://{FILES_HOST}/packages/aa/bb/{filename}"
@@ -144,6 +148,10 @@ class PyPIRegistry:
             "releases": {version: list(entries) for version, entries in self.releases.items()},
         }
 
+    def version_document(self, version: str) -> dict[str, Any]:
+        info = {"name": self.name, "version": version, **self.version_info.get(version, {})}
+        return {"info": info, "urls": list(self.releases.get(version, []))}
+
     def get(self, url: str, *, user_agent: str, timeout: float, max_bytes: int) -> HttpResponse:
         self.requests.append(url)
         self.user_agents.append(user_agent)
@@ -156,6 +164,10 @@ class PyPIRegistry:
         if url == self.doc_url:
             body = json.dumps(self.document()).encode("utf-8")
             return _ok(self.doc_override if self.doc_override is not None else body, max_bytes)
+        for version in self.releases:
+            if url == self.version_doc_url(version):
+                body = json.dumps(self.version_document(version)).encode("utf-8")
+                return _ok(body, max_bytes)
         if url in self.artifacts:
             return _ok(self.artifacts[url], max_bytes)
         return HttpResponse(status=404, headers={}, body=b"")
@@ -187,4 +199,8 @@ def pypi_pair_registry(
         old_version, old_payload, packagetype=old_packagetype, published=PUBLISHED_OLD
     )
     registry.add_release(new_version, new_payload, packagetype=new_packagetype)
+    if old_requires:
+        registry.version_info[old_version] = {"requires_dist": list(old_requires)}
+    if new_requires:
+        registry.version_info[new_version] = {"requires_dist": list(new_requires)}
     return registry

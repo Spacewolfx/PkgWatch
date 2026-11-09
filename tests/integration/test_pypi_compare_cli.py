@@ -194,15 +194,42 @@ def test_json_shape_is_stable_for_pypi(tmp_path: Path, capsys: pytest.CaptureFix
         "digests",
         "changed_files",
         "changed_files_omitted",
-        "package_json_changes",
-        "registry_metadata_changes",
+        "pypi_metadata_changes",
         "explanations",
         "ignored_rules",
         "rule_set_version",
         "measured",
         "disclaimer",
     }
-    assert set(payload["package_json_changes"]) == {"sections", "repository", "parse_problems"}
+    # The JSON schema is ecosystem-aware: PyPI carries pypi_metadata_changes and does
+    # not carry the npm-specific package_json_changes / registry_metadata_changes.
+    assert "package_json_changes" not in payload
+    assert "registry_metadata_changes" not in payload
+    assert set(payload["pypi_metadata_changes"]) == {"fields"}
+    fields = payload["pypi_metadata_changes"]["fields"]
+    assert set(fields) == {
+        "requires_dist",
+        "requires_python",
+        "classifiers",
+        "project_urls",
+        "entry_points",
+        "yanked",
+        "summary",
+    }
+    assert all(side["state"] == "absent" for pair in fields.values() for side in pair.values())
+
+
+def test_pypi_text_mode_shows_pypi_metadata_not_package_json(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    registry = _benign(tmp_path)
+    code, out, err = _run(capsys, registry)
+
+    assert code == 0
+    assert err == ""
+    assert "pypi metadata changes:" in out
+    assert "package.json changes:" not in out
+    assert "registry metadata changes:" not in out
 
 
 def test_digest_mismatch_exits_two_with_a_stable_code(

@@ -20,7 +20,7 @@ import sys
 import tempfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 from pkgwatch import __version__
 from pkgwatch.config import Config
@@ -94,7 +94,10 @@ CHANGED_FILES_LIMIT = 50
 NOT_AVAILABLE = "(not available)"
 
 # Version of the compare JSON report only. models.SCHEMA_VERSION versions the store and
-# stays at 1; v0.2 L0 changed registry_metadata_changes to typed JSON, hence 2.
+# stays at 1; v0.2 L0 changed registry_metadata_changes to typed JSON, hence 2. The
+# key set is ecosystem-conditional (npm: package_json_changes + registry_metadata_
+# changes; PyPI: pypi_metadata_changes), so schema_version stays 2 and `ecosystem`
+# tells the reader which block to expect.
 COMPARE_JSON_SCHEMA_VERSION = 2
 
 # Standard SARIF v2.1.0 schema URI for static analysis integration (GitHub/GitLab).
@@ -117,6 +120,18 @@ VERSION_DOCUMENT_FIELDS = (
     "dist.size",
     "dist.fileCount",
     "dist.unpackedSize",
+)
+
+# Per-version fields of the PyPI JSON document (/pypi/{name}/{version}/json) that
+# pypi_metadata_changes diffs, mirroring VERSION_DOCUMENT_FIELDS for npm.
+PYPI_METADATA_FIELDS = (
+    "requires_dist",
+    "requires_python",
+    "classifiers",
+    "project_urls",
+    "entry_points",
+    "yanked",
+    "summary",
 )
 
 _SEVERITY_ORDER = (
@@ -203,6 +218,10 @@ class RegistryMetadataChangesOut(TypedDict):
     fields: dict[str, dict[str, FieldSideOut]]
 
 
+class PypiMetadataChangesOut(TypedDict):
+    fields: dict[str, dict[str, FieldSideOut]]
+
+
 class ExplanationOut(TypedDict):
     why_it_matters: str
     common_benign_causes: str
@@ -226,8 +245,11 @@ class CompareReport(TypedDict):
     digests: dict[str, str]
     changed_files: list[ChangedFileOut]
     changed_files_omitted: int
-    package_json_changes: PackageJsonChangesOut
-    registry_metadata_changes: RegistryMetadataChangesOut
+    # Ecosystem-conditional blocks: npm carries the package.json and registry-metadata
+    # views, PyPI the pypi_metadata_changes view. Exactly one set is present.
+    package_json_changes: NotRequired[PackageJsonChangesOut]
+    registry_metadata_changes: NotRequired[RegistryMetadataChangesOut]
+    pypi_metadata_changes: NotRequired[PypiMetadataChangesOut]
     explanations: dict[str, ExplanationOut]
     ignored_rules: list[IgnoredRuleOut]
     rule_set_version: str
@@ -1097,7 +1119,7 @@ def _report(
     explanations: Mapping[str, tuple[str, str]],
     ignored_rules: list[IgnoredRuleOut],
 ) -> CompareReport:
-    return CompareReport(
+    report = CompareReport(
         schema_version=COMPARE_JSON_SCHEMA_VERSION,
         ecosystem=ecosystem.value,
         package=name,
@@ -1120,8 +1142,6 @@ def _report(
         digests={"old": pair.old.digest_method, "new": pair.new.digest_method},
         changed_files=changed_files,
         changed_files_omitted=omitted,
-        package_json_changes=_package_json_changes(manifest_changes),
-        registry_metadata_changes=_registry_metadata_changes(pair),
         explanations={
             rule_id: ExplanationOut(why_it_matters=copy[0], common_benign_causes=copy[1])
             for rule_id, copy in sorted(explanations.items())
@@ -1131,6 +1151,12 @@ def _report(
         measured=False,
         disclaimer=DISCLAIMER,
     )
+    if ecosystem is Ecosystem.PYPI:
+        report["pypi_metadata_changes"] = _pypi_metadata_changes(pair)
+    else:
+        report["package_json_changes"] = _package_json_changes(manifest_changes)
+        report["registry_metadata_changes"] = _registry_metadata_changes(pair)
+    return report
 
 
 def _counts(changes: Sequence[FileChange]) -> FileCounts:
@@ -1208,6 +1234,18 @@ def _registry_metadata_changes(pair: FetchPair) -> RegistryMetadataChangesOut:
                 "new": _field_side(pair.new.metadata, field),
             }
             for field in VERSION_DOCUMENT_FIELDS
+        }
+    )
+
+
+def _pypi_metadata_changes(pair: FetchPair) -> PypiMetadataChangesOut:
+    return PypiMetadataChangesOut(
+        fields={
+            field: {
+                "old": _field_side(pair.old.metadata, field),
+                "new": _field_side(pair.new.metadata, field),
+            }
+            for field in PYPI_METADATA_FIELDS
         }
     )
 
@@ -1295,22 +1333,27 @@ def _format_text(report: CompareReport) -> str:
     if report["changed_files_omitted"]:
         lines.append(f"  ... {report['changed_files_omitted']} more")
 
-    lines.append("package.json changes:")
-    for name, section in report["package_json_changes"]["sections"].items():
-        added = ",".join(section["added"]) or "-"
-        removed = ",".join(section["removed"]) or "-"
-        changed = ",".join(section["changed"]) or "-"
-        lines.append(f"  {name}: added={added} removed={removed} changed={changed}")
-    repository = report["package_json_changes"]["repository"]
-    old_repo = repository["old"] if repository["old"] is not None else NOT_AVAILABLE
-    new_repo = repository["new"] if repository["new"] is not None else NOT_AVAILABLE
-    lines.append(f"  repository: {_one_line(old_repo)} -> {_one_line(new_repo)}")
-    for problem in report["package_json_changes"]["parse_problems"]:
-        lines.append(f"  parse problem: {problem['side']} {problem['code']}")
+    if report["ecosystem"] == "pypi":
+        lines.append("pypi metadata changes:")
+        for field, sides in report["pypi_metadata_changes"]["fields"].items():
+            lines.append(f"  {field}: {_side_text(sides['old'])} -> {_side_text(sides['new'])}")
+    else:
+        lines.append("package.json changes:")
+        for name, section in report["package_json_changes"]["sections"].items():
+            added = ",".join(section["added"]) or "-"
+            removed = ",".join(section["removed"]) or "-"
+            changed = ",".join(section["changed"]) or "-"
+            lines.append(f"  {name}: added={added} removed={removed} changed={changed}")
+        repository = report["package_json_changes"]["repository"]
+        old_repo = repository["old"] if repository["old"] is not None else NOT_AVAILABLE
+        new_repo = repository["new"] if repository["new"] is not None else NOT_AVAILABLE
+        lines.append(f"  repository: {_one_line(old_repo)} -> {_one_line(new_repo)}")
+        for problem in report["package_json_changes"]["parse_problems"]:
+            lines.append(f"  parse problem: {problem['side']} {problem['code']}")
 
-    lines.append("registry metadata changes:")
-    for field, sides in report["registry_metadata_changes"]["fields"].items():
-        lines.append(f"  {field}: {_side_text(sides['old'])} -> {_side_text(sides['new'])}")
+        lines.append("registry metadata changes:")
+        for field, sides in report["registry_metadata_changes"]["fields"].items():
+            lines.append(f"  {field}: {_side_text(sides['old'])} -> {_side_text(sides['new'])}")
 
     for ignored_item in report["ignored_rules"]:
         lines.append(f"ignored: {ignored_item['rule_id']} ({ignored_item['findings']} findings)")

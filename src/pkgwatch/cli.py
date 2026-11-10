@@ -261,6 +261,7 @@ class CompareReport(TypedDict):
 class RuleCatalogEntryOut(TypedDict):
     rule_id: str
     families: list[str]
+    ecosystems: list[str]
     why_it_matters: str
     common_benign_causes: str
 
@@ -334,6 +335,12 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="RULE_ID",
         help="filter to specific rule ID(s) (repeatable)",
     )
+    rules_cmd.add_argument(
+        "--ecosystem",
+        choices=sorted({eco.value for rule in RULES for eco in rule.ecosystems}),
+        default=None,
+        help="filter rules by ecosystem",
+    )
 
     compare = sub.add_parser("compare", help="compare two exact npm versions, statically")
     compare.add_argument("old", help="npm:<name>@<old-version>")
@@ -396,6 +403,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--experimental",
         action="store_true",
         help="also run experimental rule families 3 (obfuscation) and 4 (metadata); off by default",
+    )
+    compare.add_argument(
+        "--no-cache",
+        dest="no_cache",
+        action="store_true",
+        help="disable the verified download cache for this run",
     )
 
     lock = sub.add_parser("lock", help="report what a package-lock.json update changes, statically")
@@ -591,6 +604,10 @@ def _cmd_rules(args: argparse.Namespace) -> int:
             rid for rid in selected_ids if target_family in families_map.get(rid, frozenset())
         ]
 
+    ecosystems_map = {rule.rule_id: sorted(eco.value for eco in rule.ecosystems) for rule in RULES}
+    if args.ecosystem:
+        selected_ids = [rid for rid in selected_ids if args.ecosystem in ecosystems_map[rid]]
+
     explanations_map = explanations_for(tuple(selected_ids))
     entries: list[RuleCatalogEntryOut] = []
     for rid in selected_ids:
@@ -600,6 +617,7 @@ def _cmd_rules(args: argparse.Namespace) -> int:
             RuleCatalogEntryOut(
                 rule_id=rid,
                 families=fams,
+                ecosystems=ecosystems_map[rid],
                 why_it_matters=why,
                 common_benign_causes=benign,
             )
@@ -646,6 +664,9 @@ def _cmd_compare(
     if any(item not in known for item in ignored):
         return _error(UNKNOWN_RULE_ID, structured_json)
 
+    cache = None
+    if not args.no_cache:
+        cache = DownloadCache(active_config.fetch.cache_dir or default_cache_dir())
     try:
         report, exit_code = _compare(
             str(args.old),
@@ -659,6 +680,7 @@ def _cmd_compare(
             explain=bool(args.explain) or sarif_mode,
             ignored=ignored,
             experimental=bool(args.experimental),
+            cache=cache,
         )
     except FetchError as exc:
         return _error(exc.code.value, structured_json)
@@ -894,6 +916,7 @@ def _compare(
     explain: bool,
     ignored: Sequence[str],
     experimental: bool = False,
+    cache: DownloadCache | None = None,
 ) -> tuple[CompareReport, int]:
     ecosystem, old_name, old_version = _route(first)
     _new_ecosystem, new_name, new_version = _route(second)
@@ -912,6 +935,7 @@ def _compare(
                 config=config,
                 client=client,
                 workdir=workdir,
+                cache=cache,
             )
         else:
             pair = fetch_pair(
@@ -921,6 +945,7 @@ def _compare(
                 config=config,
                 client=client,
                 workdir=workdir,
+                cache=cache,
             )
         old_tree = _extract(pair.old.path, workdir / "extract-old", config)
         new_tree = _extract(pair.new.path, workdir / "extract-new", config)
@@ -1318,6 +1343,7 @@ def _format_text(report: CompareReport) -> str:
     files = report["files"]
     lines = [
         f"package: {report['package']}",
+        f"ecosystem: {report['ecosystem']}",
         f"old version: {report['old_version']}",
         f"new version: {report['new_version']}",
         f"files: added={files['added']}, removed={files['removed']}, modified={files['modified']}",
@@ -1411,6 +1437,11 @@ def _format_compare_markdown(report: CompareReport) -> str:
         boost_tokens = ", ".join(f"`{b['name']}` ({b['points']:+d})" for b in report["boosts"])
         lines.append(f"- **Score Boosts:** {boost_tokens}")
 
+    if report["warnings"]:
+        lines.extend(["", "### Warnings", ""])
+        for warning in report["warnings"]:
+            lines.append(f"- {_md_escape(warning)}")
+
     lines.append("")
     lines.append("### Findings")
     if report["findings"]:
@@ -1441,6 +1472,36 @@ def _format_compare_markdown(report: CompareReport) -> str:
             lines.append(f"- **`{_md_escape(rule_id)}`**{_md_escape(marker)}")
             lines.append(f"  - *Why it matters:* {_one_line(copy['why_it_matters'])}")
             lines.append(f"  - *Common benign causes:* {_one_line(copy['common_benign_causes'])}")
+
+    if report["ecosystem"] == "pypi":
+        lines.extend(["", "### PyPI Metadata", ""])
+        for field, sides in report["pypi_metadata_changes"]["fields"].items():
+            old = _md_escape(_side_text(sides["old"]))
+            new = _md_escape(_side_text(sides["new"]))
+            lines.append(f"- **{_md_escape(field)}:** {old} -> {new}")
+    else:
+        lines.extend(["", "### Package.json Changes", ""])
+        for name, section in report["package_json_changes"]["sections"].items():
+            added = ", ".join(section["added"]) or "-"
+            removed = ", ".join(section["removed"]) or "-"
+            changed = ", ".join(section["changed"]) or "-"
+            lines.append(
+                f"- **{_md_escape(name)}:** added={_md_escape(added)} "
+                f"removed={_md_escape(removed)} changed={_md_escape(changed)}"
+            )
+        repository = report["package_json_changes"]["repository"]
+        old_repo = repository["old"] if repository["old"] is not None else NOT_AVAILABLE
+        new_repo = repository["new"] if repository["new"] is not None else NOT_AVAILABLE
+        lines.append(f"- **repository:** {_md_escape(old_repo)} -> {_md_escape(new_repo)}")
+        for problem in report["package_json_changes"]["parse_problems"]:
+            lines.append(
+                f"- parse problem: {_md_escape(problem['side'])} {_md_escape(problem['code'])}"
+            )
+        lines.extend(["", "### Registry Metadata", ""])
+        for field, sides in report["registry_metadata_changes"]["fields"].items():
+            old = _md_escape(_side_text(sides["old"]))
+            new = _md_escape(_side_text(sides["new"]))
+            lines.append(f"- **{_md_escape(field)}:** {old} -> {new}")
 
     lines.extend(["", "<details>", "<summary>Changed Files</summary>", ""])
     if report["changed_files"]:
@@ -1688,7 +1749,8 @@ def _format_rules_text(catalog: RuleCatalogReport) -> str:
     ]
     for entry in catalog["rules"]:
         fams = ", ".join(entry["families"]) or "-"
-        lines.append(f"  {entry['rule_id']} (families: {fams})")
+        ecos = ", ".join(entry["ecosystems"]) or "-"
+        lines.append(f"  {entry['rule_id']} (families: {fams}, ecosystems: {ecos})")
         if entry["why_it_matters"]:
             lines.append(f"    Why it matters: {entry['why_it_matters']}")
         if entry["common_benign_causes"]:
@@ -1700,13 +1762,14 @@ def _format_rules_markdown(catalog: RuleCatalogReport) -> str:
     lines = [
         f"## pkgwatch rules (version `{catalog['rule_set_version']}`)",
         "",
-        "| Rule ID | Families | Why it matters | Common benign causes |",
-        "| :--- | :--- | :--- | :--- |",
+        "| Rule ID | Families | Ecosystems | Why it matters | Common benign causes |",
+        "| :--- | :--- | :--- | :--- | :--- |",
     ]
     for entry in catalog["rules"]:
         fams = ", ".join(f"`{f}`" for f in entry["families"]) or "-"
+        ecos = ", ".join(f"`{e}`" for e in entry["ecosystems"]) or "-"
         lines.append(
-            f"| `{_md_escape(entry['rule_id'])}` | {fams} | "
+            f"| `{_md_escape(entry['rule_id'])}` | {fams} | {ecos} | "
             f"{_md_escape(entry['why_it_matters'])} | {_md_escape(entry['common_benign_causes'])} |"
         )
     return "\n".join(lines)

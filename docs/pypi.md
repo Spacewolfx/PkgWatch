@@ -24,7 +24,9 @@ HTTPS on `pypi.org` and `files.pythonhosted.org` is followed. Artifacts are veri
 against `digests.sha256` (falling back to `digests.blake2b_256`) before extraction;
 a mismatch stops the run with `DIGEST_MISMATCH`. An sdist (`.tar.gz`) is preferred;
 if a release has only a wheel (`.whl`), the wheel is used; if it has neither,
-`ARTIFACT_UNAVAILABLE`.
+`ARTIFACT_UNAVAILABLE`. Artifacts are cached keyed by the verified digest (the same
+cache as npm); `[fetch].cache_dir` overrides the location and `--no-cache` disables it
+for one run.
 
 Per-version registry metadata is fetched from `GET /pypi/<name>/<version>/json` for
 both versions and diffed into `pypi metadata changes` (`requires_dist`,

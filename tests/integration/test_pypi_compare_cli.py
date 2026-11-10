@@ -15,7 +15,7 @@ import pytest
 
 from pkgwatch import cli
 from pkgwatch.cli import DISCLAIMER
-from pkgwatch.config import Config
+from pkgwatch.config import Config, FetchConfig
 from tests.support.pypi_registry import FILES_HOST, PYPI_HOST, PyPIRegistry, pypi_pair_registry
 
 OLD_VERSION = "1.0.0"
@@ -42,17 +42,18 @@ def _run(
     config: Config | None = None,
     first: str | None = None,
     second: str | None = None,
+    cache: bool = False,
 ) -> tuple[int, str, str]:
-    code = cli.main(
-        [
-            "compare",
-            first if first is not None else f"pypi:{registry.name}@{OLD_VERSION}",
-            second if second is not None else f"pypi:{registry.name}@{NEW_VERSION}",
-            *extra,
-        ],
-        client=registry,
-        config=config or Config(),
-    )
+    args = [
+        "compare",
+        first if first is not None else f"pypi:{registry.name}@{OLD_VERSION}",
+        second if second is not None else f"pypi:{registry.name}@{NEW_VERSION}",
+        *extra,
+    ]
+    # Tests never touch the user cache unless they opt in with a tmp cache_dir.
+    if not cache and "--no-cache" not in extra:
+        args.append("--no-cache")
+    code = cli.main(args, client=registry, config=config or Config())
     captured = capsys.readouterr()
     return code, captured.out, captured.err
 
@@ -498,3 +499,38 @@ def test_a_normal_version_bump_has_no_noop_warning(
     assert payload["files"]["modified"] > 0
     assert payload["warnings"] == []
     assert "silent no-op" not in err
+
+
+def test_text_mode_reports_the_pypi_ecosystem(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    registry = _benign(tmp_path)
+    code, out, _ = _run(capsys, registry)
+    assert code == 0
+    assert "ecosystem: pypi" in out
+
+
+def test_markdown_report_includes_pypi_metadata(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    registry = _benign(tmp_path, new_requires=("requests>=2.0",))
+    code, out, _ = _run(capsys, registry, "--markdown")
+    assert code == 0
+    assert "### PyPI Metadata" in out
+    assert "requires_dist" in out
+    assert "requests>=2.0" in out
+
+
+def test_compare_reuses_the_download_cache_on_a_second_run(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    registry = _benign(tmp_path)
+    config = Config(fetch=FetchConfig(cache_dir=tmp_path / "cache"))
+    code, _, _ = _run(capsys, registry, "--json", config=config, cache=True)
+    assert code == 0
+    assert len(registry.requests) == 5
+
+    code2, _, _ = _run(capsys, registry, "--json", config=config, cache=True)
+    assert code2 == 0
+    assert len(registry.requests) == 8
+    assert all(FILES_HOST not in url for url in registry.requests[5:])

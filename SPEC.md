@@ -514,6 +514,11 @@ capture and `run_id`.
 (§9.2, PyPI JSON API) · `lock --old OLD_LOCK --new NEW_LOCK`
 (§9.1, implemented in `lock/` + `lockfile/`).
 
+`compare` reuses the verified download cache of §9.1(9) for both ecosystems (2026-11-10):
+`[fetch].cache_dir` overrides the location, `--no-cache` disables reads and writes for one
+run. `rules --ecosystem npm|pypi` filters the catalog, and every catalog entry lists its
+ecosystems.
+
 ### 9.1 `pkgwatch lock` — operator decision, initial untuned values, not measured (2026-11-07)
 
 Goal: a dependency-update PR changed `package-lock.json`; for every package whose version
@@ -638,8 +643,11 @@ order; unbalanced or unparseable sets stay unpaired (`MULTIPLE_VERSIONS`).
 
 1. **Endpoint.** `compare pypi:<name>@<old> pypi:<name>@<new>` fetches the single exact
    project document `GET https://pypi.org/pypi/<name>/json`; artifact URLs are read
-   from that document's `releases[v]` file entries and never invented. Only HTTPS on
-   `pypi.org` (document) and `files.pythonhosted.org` (artifacts) is followed (§3).
+   from that document's `releases[v]` file entries and never invented. The per-version
+   document `GET https://pypi.org/pypi/<name>/<version>/json` is fetched for both sides
+   for the registry-metadata diff; if it cannot be fetched the fields read
+   `(not available)` and the artifact analysis still runs. Only HTTPS on
+   `pypi.org` (documents) and `files.pythonhosted.org` (artifacts) is followed (§3).
 2. **Name matching.** Each spec is parsed by its own ecosystem (`pypi:` vs `npm:`);
    a pair must agree on the ecosystem and the PEP 503 normalized name, else
    `PACKAGE_MISMATCH`. The report shows the original spelling.
@@ -658,8 +666,9 @@ order; unbalanced or unparseable sets stay unpaired (`MULTIPLE_VERSIONS`).
    unchanged, so `PYPI_DEPENDENCY_ADDED` is off by default and surfaces under
    `--experimental`, exactly like npm's `DEPENDENCY_ADDED`. §7's "no PyPI finding is
    experimental in v1" is read as "no new gating concept". The `compare` JSON
-   `schema_version` stays 2; `ecosystem` reads `"pypi"` and `package_json_changes`
-   renders the empty skeleton.
+   `schema_version` stays 2; `ecosystem` reads `"pypi"`, the npm-only blocks
+   (`package_json_changes`, `registry_metadata_changes`) are omitted, and
+   `pypi_metadata_changes` carries the per-version registry-metadata diff.
 
 ## 10. Open assumptions (not silently guessed)
 

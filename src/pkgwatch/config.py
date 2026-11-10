@@ -139,6 +139,8 @@ class FetchConfig(BaseModel):
     # registry's User-Agent policy and rate limits were not verified offline; no contact is
     # claimed here. Revisit before the first live-registry run.
     user_agent: str = Field(default="pkgwatch/0.1.0", min_length=1, max_length=128)
+    # ``None`` means the operating system's user cache directory, never the repository.
+    cache_dir: Path | None = None
 
 
 class IgnoredRule(BaseModel):
@@ -201,6 +203,9 @@ class Config(BaseModel):
         lock = config.lock
         if lock.cache_dir is not None and not lock.cache_dir.is_absolute():
             lock = lock.model_copy(update={"cache_dir": _resolve(base, lock.cache_dir)})
+        fetch = config.fetch
+        if fetch.cache_dir is not None and not fetch.cache_dir.is_absolute():
+            fetch = fetch.model_copy(update={"cache_dir": _resolve(base, fetch.cache_dir)})
         return config.model_copy(
             update={
                 "paths": PathsConfig(
@@ -208,6 +213,7 @@ class Config(BaseModel):
                     db_path=_resolve(base, config.paths.db_path),
                 ),
                 "lock": lock,
+                "fetch": fetch,
             }
         )
 
@@ -284,6 +290,7 @@ max_tarball_bytes = 67108864
 request_timeout_seconds = 15.0
 max_redirects = 5
 user_agent = "pkgwatch/0.1.0"
+# cache_dir: omit to use the user cache directory (never the repository)
 
 [lock]
 max_pairs = 300

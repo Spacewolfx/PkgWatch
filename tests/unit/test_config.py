@@ -129,3 +129,14 @@ def test_an_ignore_with_an_empty_reason_is_rejected() -> None:
 def test_an_unknown_fail_on_is_rejected() -> None:
     with pytest.raises(ValidationError):
         Config.from_toml('[lock]\nfail_on = "sometimes"\n')
+
+
+def test_fetch_cache_dir_defaults_to_none() -> None:
+    assert Config().fetch.cache_dir is None
+
+
+def test_load_resolves_relative_fetch_cache_dir(tmp_path: Path) -> None:
+    path = tmp_path / "pkgwatch.toml"
+    path.write_text('[fetch]\ncache_dir = "downloads"\n', encoding="utf-8")
+    config = Config.load(path)
+    assert config.fetch.cache_dir == tmp_path / "downloads"

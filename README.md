@@ -129,6 +129,7 @@ Scoped names are accepted and percent-encoded (`@scope/pkg` becomes `@scope%2Fpk
 | `--explain` | add neutral "Why it matters" / "Common benign causes" lines per fired rule (experimental rules are marked) |
 | `--ignore RULE_ID` | repeatable; removes that rule from findings, score and exit code, and prints `ignored: RULE_ID (n findings)`; an unknown ID exits 2 |
 | `--experimental` | also run rule families 3 (obfuscation) and 4 (metadata); off by default |
+| `--no-cache` | disable the verified download cache for this run |
 
 ### Recorded output
 
@@ -150,9 +151,10 @@ Detection quality has not been measured. Findings are signals for human
 review, not proof of malicious behaviour.
 ```
 
-That run was recorded under **v0.1**. Current versions keep every line above and append
-the new sections (changed files, `package.json` changes, registry metadata, JSON schema,
-toml config, `--config`/`--baseline` flows) after it.
+That run was recorded under **v0.1**. Current versions keep every line above, add an
+`ecosystem:` line after `package:`, and append the new sections (changed files,
+`package.json` changes, registry metadata, JSON schema, toml config,
+`--config`/`--baseline` flows) after it.
 
 **2026-11-09**, PyPI, exact command (`--experimental`):
 
@@ -408,7 +410,9 @@ Tarballs are cached under the user cache directory (`%LOCALAPPDATA%\pkgwatch\cac
 Windows, `~/Library/Caches/pkgwatch` on macOS, `$XDG_CACHE_HOME/pkgwatch` elsewhere), keyed
 by the digest the registry advertised and the bytes were verified against. Every read
 re-verifies that digest; a corrupt entry is deleted and fetched again. The cache is never
-placed inside the repository unless `[lock].cache_dir` explicitly says so. Transient
+placed inside the repository unless `[lock].cache_dir` (lock) or `[fetch].cache_dir`
+(compare) explicitly says so. `compare` shares the same cache for npm and PyPI artifacts;
+`--no-cache` disables it for one run. Transient
 failures (429, 5xx, timeouts) are retried with capped exponential backoff, `Retry-After`
 is honoured, and each request waits `[lock].request_delay_seconds` to stay polite.
 
@@ -527,6 +531,9 @@ suppresses a finding. Sandbox limits and score weights live in their existing se
 v0.2 changes neither rule logic for families 1–2 nor any score weight.
 
 ## Rules
+
+`pkgwatch rules [--json | --markdown] [--family FAMILY] [--rule RULE_ID] [--ecosystem npm|pypi]`
+prints the catalog; every entry lists its families and ecosystems.
 
 Families 1–2 are unchanged from M2. v0.2 adds, for npm only:
 

@@ -48,17 +48,18 @@ def _run(
     registry: FakeRegistry,
     *extra: str,
     config: Config | None = None,
+    cache: bool = False,
 ) -> tuple[int, str, str]:
-    code = cli.main(
-        [
-            "compare",
-            f"npm:{registry.name}@{OLD_VERSION}",
-            f"npm:{registry.name}@{NEW_VERSION}",
-            *extra,
-        ],
-        client=registry,
-        config=config or Config(),
-    )
+    args = [
+        "compare",
+        f"npm:{registry.name}@{OLD_VERSION}",
+        f"npm:{registry.name}@{NEW_VERSION}",
+        *extra,
+    ]
+    # Tests never touch the user cache unless they opt in with a tmp cache_dir.
+    if not cache and "--no-cache" not in extra:
+        args.append("--no-cache")
+    code = cli.main(args, client=registry, config=config or Config())
     captured = capsys.readouterr()
     return code, captured.out, captured.err
 
@@ -806,3 +807,76 @@ def test_compare_skips_experimental_families_by_default(
         item["rule_id"] for item in json.loads(enabled_out)["findings"]
     }
     assert enabled_code == 0
+
+
+def test_text_mode_reports_the_ecosystem(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    registry = make_registry(tmp_path, BENIGN)
+    code, out, _ = _run(capsys, registry)
+    assert code == 0
+    assert "ecosystem: npm" in out
+
+
+def test_markdown_report_includes_manifest_and_registry_metadata(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    registry = make_registry(tmp_path, INSTALLER)
+    code, out, _ = _run(capsys, registry, "--markdown")
+    assert code == 1
+    assert "### Package.json Changes" in out
+    assert "scripts" in out
+    assert "install" in out
+    assert "### Registry Metadata" in out
+
+
+def test_markdown_report_surfaces_warnings(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    registry = make_registry(tmp_path, BENIGN)
+    many = {f"f{i:03d}.js": f"var x = {i};\n".encode() for i in range(60)}
+    registry.set_new(tarball_from_files(tmp_path, "many", many))
+    code, out, _ = _run(capsys, registry, "--markdown")
+    assert code == 0
+    assert "### Warnings" in out
+    assert "silent no-op" in out
+
+
+def test_markdown_report_has_no_warnings_section_when_clean(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    registry = make_registry(tmp_path, BENIGN)
+    code, out, _ = _run(capsys, registry, "--markdown")
+    assert code == 0
+    assert "### Warnings" not in out
+
+
+def test_compare_reuses_the_download_cache_on_a_second_run(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    registry = make_registry(tmp_path, BENIGN)
+    config = Config(fetch=FetchConfig(cache_dir=tmp_path / "cache"))
+    code, out, _ = _run(capsys, registry, "--json", config=config, cache=True)
+    assert code == 0
+    first = json.loads(out)
+    assert len(registry.requests) == 3
+
+    code2, out2, _ = _run(capsys, registry, "--json", config=config, cache=True)
+    assert code2 == 0
+    second = json.loads(out2)
+    assert second["score"] == first["score"]
+    assert second["files"] == first["files"]
+    assert len(registry.requests) == 4
+    assert registry.requests[3] == registry.doc_url
+
+
+def test_no_cache_flag_disables_the_download_cache(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    registry = make_registry(tmp_path, BENIGN)
+    config = Config(fetch=FetchConfig(cache_dir=tmp_path / "cache"))
+    code, _, _ = _run(capsys, registry, "--json", config=config, cache=True)
+    assert code == 0
+    code2, _, _ = _run(capsys, registry, "--json", "--no-cache", config=config)
+    assert code2 == 0
+    assert len(registry.requests) == 6

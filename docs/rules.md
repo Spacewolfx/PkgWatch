@@ -1,5 +1,8 @@
 # Rule catalog
 
+`pkgwatch rules [--json | --markdown] [--family FAMILY] [--rule RULE_ID] [--ecosystem npm|pypi]`
+prints this catalog from the live registry; every entry lists its families and ecosystems.
+
 Every rule is a pure `DiffContext -> list[Finding]` function; the full contract is in
 [SPEC.md](../SPEC.md) §4. Findings are produced for **added lines only** (family 2) or
 the shipped metadata document (family 4), and a capability already present anywhere in

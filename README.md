@@ -5,6 +5,7 @@
 ```bash
 pkgwatch compare npm:<name>@<old> npm:<name>@<new> [--json] [--fail-on LEVEL]
                              [--verbose] [--explain] [--ignore RULE_ID ...]
+pkgwatch compare pypi:<name>@<old> pypi:<name>@<new> [--json] [--experimental]
 ```
 
 **Contents:** [What it does](#what-it-does) · [Install](#install) · [Usage](#usage) ·

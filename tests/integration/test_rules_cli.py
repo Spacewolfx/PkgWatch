@@ -65,3 +65,19 @@ def test_unknown_ecosystem_is_rejected(capsys: pytest.CaptureFixture[str]) -> No
     with pytest.raises(SystemExit) as exc:
         cli.main(["rules", "--ecosystem", "cargo"])
     assert exc.value.code == 2
+
+
+def test_top_level_help_mentions_both_ecosystems(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        cli.main(["--help"])
+    out = capsys.readouterr().out
+    assert "npm" in out
+    assert "PyPI" in out
+
+
+def test_compare_help_mentions_both_spec_forms(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        cli.main(["compare", "--help"])
+    out = capsys.readouterr().out
+    assert "npm:<name>@<old-version>" in out
+    assert "pypi:<name>@<old-version>" in out

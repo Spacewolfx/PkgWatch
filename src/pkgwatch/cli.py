@@ -302,7 +302,7 @@ def _non_negative_int(text: str) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pkgwatch",
-        description="Static supply-chain diff and lockfile analyzer for npm packages.",
+        description="Static supply-chain diff and lockfile analyzer for npm and PyPI packages.",
     )
     sub = parser.add_subparsers(dest="command")
 
@@ -342,9 +342,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="filter rules by ecosystem",
     )
 
-    compare = sub.add_parser("compare", help="compare two exact npm versions, statically")
-    compare.add_argument("old", help="npm:<name>@<old-version>")
-    compare.add_argument("new", help="npm:<name>@<new-version>")
+    compare = sub.add_parser("compare", help="compare two exact npm or PyPI versions, statically")
+    compare.add_argument("old", help="npm:<name>@<old-version> or pypi:<name>@<old-version>")
+    compare.add_argument("new", help="npm:<name>@<new-version> or pypi:<name>@<new-version>")
     compare.add_argument("--json", dest="as_json", action="store_true", help="emit JSON")
     compare.add_argument(
         "--markdown",

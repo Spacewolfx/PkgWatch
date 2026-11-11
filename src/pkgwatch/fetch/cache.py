@@ -1,4 +1,4 @@
-"""Content-addressed tarball cache for ``pkgwatch lock`` (SPEC §9.1).
+"""Content-addressed artifact cache for ``pkgwatch compare`` and ``pkgwatch lock`` (SPEC §9.1).
 
 An entry is keyed by the digest the registry advertises and the bytes were verified
 against, so a cache hit is byte-identical to a fresh download. Every read hashes the file

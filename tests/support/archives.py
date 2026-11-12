@@ -17,6 +17,7 @@ class Entry:
     kind: str = "file"
     linkname: str = ""
     mode: int = 0o644
+    permission_only: bool = False
 
 
 def make_tar(path: Path, entries: list[Entry], *, gzip: bool = True) -> Path:
@@ -75,7 +76,8 @@ def make_zip(path: Path, entries: list[Entry]) -> Path:
                 info.external_attr = (bits | 0o644) << 16
                 archive.writestr(info, b"")
             else:
-                info.external_attr = (stat.S_IFREG | entry.mode) << 16
+                mode_bits = entry.mode if entry.permission_only else stat.S_IFREG | entry.mode
+                info.external_attr = mode_bits << 16
                 archive.writestr(info, entry.data)
     return path
 

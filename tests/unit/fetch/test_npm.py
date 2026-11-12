@@ -16,6 +16,7 @@ from pkgwatch.fetch.npm import (
     FetchErrorCode,
     UrllibClient,
     build_doc_url,
+    expected_digest,
     is_registry_url,
     parse_spec,
     verify_digest,
@@ -108,6 +109,15 @@ def test_verify_digest_accepts_a_valid_sri_sha512() -> None:
     payload = b"synthetic payload"
     sri = "sha512-" + base64.b64encode(hashlib.sha512(payload).digest()).decode("ascii")
     assert verify_digest(payload, {"integrity": sri}) == "integrity"
+
+
+def test_sri_sha512_with_wrong_decoded_length_is_unsupported() -> None:
+    # A sha512 SRI must decode to exactly 64 bytes; a short decode would otherwise
+    # produce a truncated cache key and a misleading DIGEST_MISMATCH.
+    short = "sha512-" + base64.b64encode(b"12345").decode("ascii")
+    with pytest.raises(FetchError) as excinfo:
+        expected_digest({"integrity": short})
+    assert excinfo.value.code is FetchErrorCode.DIGEST_UNSUPPORTED
 
 
 def test_digest_mismatch_token_matches_the_spec_rejection_code() -> None:

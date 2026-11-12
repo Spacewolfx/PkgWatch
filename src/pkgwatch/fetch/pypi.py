@@ -64,6 +64,11 @@ MAX_VERSION_LENGTH = 128
 _NAME_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?")
 _NORMALIZE_RE = re.compile(r"[-_.]+")
 
+# Artifact filenames become a single path segment prefixed with "old-"/"new-".
+# Allowlist only filesystem-safe characters and leave room for that prefix.
+_FILENAME_LEAF_RE = re.compile(r"[A-Za-z0-9._+-]+")
+_FILENAME_LEAF_MAX = 251
+
 _DIGEST_HEX_LENGTHS = {"sha256": 64, "blake2b_256": 64}
 
 
@@ -319,11 +324,9 @@ def _filename_leaf(file_entry: Mapping[str, Any], url: str) -> str:
     if not isinstance(candidate, str) or not candidate:
         candidate = posixpath.basename(urllib.parse.urlsplit(url).path)
     if (
-        not candidate
-        or candidate in {".", ".."}
-        or "/" in candidate
-        or "\\" in candidate
-        or "\x00" in candidate
+        not _FILENAME_LEAF_RE.fullmatch(candidate)
+        or len(candidate) > _FILENAME_LEAF_MAX
+        or candidate.endswith(".")
     ):
         raise FetchError(FetchErrorCode.REGISTRY_DOC_INVALID)
     return candidate

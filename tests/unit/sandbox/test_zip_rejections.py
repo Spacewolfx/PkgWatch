@@ -58,3 +58,16 @@ def test_zip_success(tmp_path: Path) -> None:
     assert result.archive_format is ArchiveFormat.ZIP
     assert (tmp_path / "root" / "pkg" / "a.py").read_bytes() == b"print(1)\n"
     assert result.file_count == 1
+
+
+def test_zip_permission_only_mode_is_a_regular_file(tmp_path: Path) -> None:
+    # Wheels written by some tools store only permission bits (0o644) with no
+    # S_IFREG type bit. Those are ordinary files, not unsupported member types.
+    archive = make_zip(
+        tmp_path / "pkg.zip",
+        [Entry("pkg/a.py", data=b"print(1)\n", permission_only=True)],
+    )
+    result = extract_archive(archive, tmp_path / "root", SandboxLimits())
+    assert result.archive_format is ArchiveFormat.ZIP
+    assert (tmp_path / "root" / "pkg" / "a.py").read_bytes() == b"print(1)\n"
+    assert result.file_count == 1

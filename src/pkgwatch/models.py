@@ -270,8 +270,8 @@ class SandboxRejection(BaseModel):
     model_config = _STRICT
 
     reason_code: RejectionCode
-    detail: str = Field(max_length=EVIDENCE_MAX_CHARS)
-    offending_path: str | None = Field(default=None, max_length=EVIDENCE_MAX_CHARS)
+    detail: str
+    offending_path: str | None = None
     limit_name: str | None = Field(default=None, max_length=64)
     limit_value: int | float | None = None
     observed_value: int | float | None = None

@@ -44,6 +44,7 @@ NPM_DOC_URL_TEMPLATE = "https://registry.npmjs.org/{name}"
 # offline; if a first smoke test sees a cross-host redirect, decide the allow-list then.
 REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 _SRI_PREFIX = "sha512-"
+_SHA512_BYTES = 64
 _SPEC_PREFIX = "npm:"
 MAX_NAME_LENGTH = 214
 MAX_VERSION_LENGTH = 128
@@ -253,6 +254,8 @@ def expected_digest(dist: Mapping[str, Any]) -> ExpectedDigest:
             expected = base64.b64decode(integrity[len(_SRI_PREFIX) :], validate=True)
         except (binascii.Error, ValueError):
             raise FetchError(FetchErrorCode.DIGEST_UNSUPPORTED) from None
+        if len(expected) != _SHA512_BYTES:
+            raise FetchError(FetchErrorCode.DIGEST_UNSUPPORTED)
         return ExpectedDigest(method="integrity", algorithm="sha512", hexdigest=expected.hex())
 
     shasum = dist.get("shasum")
@@ -463,6 +466,12 @@ def _header(headers: Mapping[str, str], name: str) -> str | None:
 
 def _metadata_for(entry: Mapping[str, Any]) -> dict[str, Any]:
     return {key: entry[key] for key in _CONSUMED_VERSION_FIELDS if key in entry}
+
+
+def declared_unpacked_size(metadata: Mapping[str, Any]) -> object:
+    """The registry's optional ``dist.unpackedSize`` for the TB3 cross-check, or None."""
+    dist = metadata.get("dist")
+    return dist.get("unpackedSize") if isinstance(dist, dict) else None
 
 
 def _published_at(document: Mapping[str, Any], version: str) -> datetime:

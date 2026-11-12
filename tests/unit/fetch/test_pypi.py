@@ -12,6 +12,7 @@ import pytest
 from pkgwatch.config import Config
 from pkgwatch.fetch.npm import FetchError, FetchErrorCode
 from pkgwatch.fetch.pypi import (
+    _filename_leaf,
     build_doc_url,
     fetch_pair_pypi,
     is_pypi_url,
@@ -349,3 +350,36 @@ def test_version_metadata_degrades_to_empty_when_unavailable(tmp_path: Path) -> 
             return HttpResponse(status=404, headers={}, body=b"")
 
     assert _version_metadata(Offline(), "demo", "1.0.0", CONFIG) == {}
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "x:y.tar.gz",  # NTFS alternate data stream
+        "a\x01b.tar.gz",  # control character
+        "a b.tar.gz",  # space
+        "a$b.tar.gz",  # outside the allowlist
+        "evil.tar.gz.",  # trailing dot
+        "a" * 300 + ".tar.gz",  # over-long component
+        "..",
+        "a/b.tar.gz",
+        "a\\b.tar.gz",
+    ],
+)
+def test_filename_leaf_rejects_unsafe_names(filename: str) -> None:
+    with pytest.raises(FetchError) as excinfo:
+        _filename_leaf({"filename": filename}, "https://files.pythonhosted.org/x/y")
+    assert excinfo.value.code is FetchErrorCode.REGISTRY_DOC_INVALID
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "demo-1.0.0.tar.gz",
+        "demo-1.0.0-py3-none-any.whl",
+        "foo_bar-1.0.tar.gz",
+        "pkg+local-1.0.tar.gz",
+    ],
+)
+def test_filename_leaf_accepts_realistic_names(filename: str) -> None:
+    assert _filename_leaf({"filename": filename}, "https://files.pythonhosted.org/x/y") == filename

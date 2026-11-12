@@ -24,7 +24,13 @@ from pkgwatch.config import Config, LockConfig
 from pkgwatch.diff import build_diff_context
 from pkgwatch.diff.manifest import diff_root_manifests, manifest_parse_errors
 from pkgwatch.fetch.cache import DownloadCache
-from pkgwatch.fetch.npm import FetchError, HttpClient, fetch_pair, fetch_release
+from pkgwatch.fetch.npm import (
+    FetchError,
+    HttpClient,
+    declared_unpacked_size,
+    fetch_pair,
+    fetch_release,
+)
 from pkgwatch.fetch.retry import RetryingClient, RetryPolicy
 from pkgwatch.lock.baseline import BaselineEntry, BaselineKey, evidence_sha256
 from pkgwatch.lockfile import (
@@ -50,7 +56,7 @@ from pkgwatch.models import (
 )
 from pkgwatch.rules import families_by_rule_id, rule_set_version
 from pkgwatch.rules.runner import analysis_incomplete, run_rules
-from pkgwatch.sandbox import ArchiveRejected, extract_archive
+from pkgwatch.sandbox import ArchiveRejected, cross_check_unpacked_size, extract_archive
 from pkgwatch.score.engine import score
 
 # The same stable codes ``compare`` prints. Exception messages can echo package-controlled
@@ -273,6 +279,12 @@ def _analyse_pair(
             )
             old_tree = extract_archive(fetched.old.path, workdir / "extract-old", config.sandbox)
             new_tree = extract_archive(fetched.new.path, workdir / "extract-new", config.sandbox)
+            cross_check_unpacked_size(
+                old_tree.total_bytes, declared_unpacked_size(fetched.old.metadata)
+            )
+            cross_check_unpacked_size(
+                new_tree.total_bytes, declared_unpacked_size(fetched.new.metadata)
+            )
             ctx = build_diff_context(
                 ecosystem=Ecosystem.NPM,
                 package_name=pair.name,
@@ -462,6 +474,9 @@ def _analyse_new_package(
                 cache=cache,
             )
             new_tree = extract_archive(artifact.path, workdir / "extract-new", config.sandbox)
+            cross_check_unpacked_size(
+                new_tree.total_bytes, declared_unpacked_size(artifact.metadata)
+            )
             ctx = build_diff_context(
                 ecosystem=Ecosystem.NPM,
                 package_name=package.name,

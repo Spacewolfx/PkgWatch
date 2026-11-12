@@ -472,3 +472,125 @@ def test_too_many_pairs_fails_instead_of_truncating(tmp_path: Path) -> None:
         plan_lock_update(old, new, limits=LockConfig(max_pairs=1))
 
     assert caught.value.code is LockfileErrorCode.TOO_MANY_PAIRS
+
+
+def test_a_changed_package_whose_new_version_was_skipped_is_unanalysed_not_removed(
+    tmp_path: Path,
+) -> None:
+    # C1: the new version fails parsing, so it never reaches the plan's name loop. The
+    # package must not be silently reported as removed; it is unanalysed (SPEC §9.1 L2c).
+    old = _parsed(
+        tmp_path,
+        "old.json",
+        {"node_modules/x": {"version": "1.0.0", "resolved": _resolved("x", "1")}},
+    )
+    new = _parsed(tmp_path, "new.json", {"node_modules/x": {"version": "^2.0.0"}})
+
+    plan = plan_lock_update(old, new, limits=LockConfig())
+
+    assert plan.removed_packages == ()
+    assert plan.changed_pairs == ()
+    assert plan.unanalysed == (
+        UnanalysedPackage(
+            name="x",
+            old_version="1.0.0",
+            new_version=None,
+            reason=SkipReason.INVALID_VERSION,
+        ),
+    )
+
+
+def test_a_package_whose_old_version_was_skipped_is_unanalysed_not_new(
+    tmp_path: Path,
+) -> None:
+    # C1 symmetric: the old version fails parsing, so the package is not brand-new. It
+    # had a predecessor we could not read, so it is unanalysed, never a clean new result.
+    old = _parsed(tmp_path, "old.json", {"node_modules/x": {"version": "^1.0.0"}})
+    new = _parsed(
+        tmp_path,
+        "new.json",
+        {"node_modules/x": {"version": "2.0.0", "resolved": _resolved("x", "2")}},
+    )
+
+    plan = plan_lock_update(old, new, limits=LockConfig())
+
+    assert plan.new_packages == ()
+    assert plan.unanalysed == (
+        UnanalysedPackage(
+            name="x",
+            old_version=None,
+            new_version="2.0.0",
+            reason=SkipReason.INVALID_VERSION,
+        ),
+    )
+
+
+def test_an_equal_version_integrity_swap_is_unanalysed_not_unchanged(tmp_path: Path) -> None:
+    # C2: the version is identical on both sides but the integrity hash changed — a
+    # tarball republished at the same version. We cannot fetch the historical tarball to
+    # diff it, so it must surface as unanalysed, never a silent "no change" (SPEC §9.1).
+    old = _parsed(
+        tmp_path,
+        "old.json",
+        {
+            "node_modules/x": {
+                "version": "1.0.0",
+                "resolved": _resolved("x", "1"),
+                "integrity": "sha512-OLDOLDOLD",
+            }
+        },
+    )
+    new = _parsed(
+        tmp_path,
+        "new.json",
+        {
+            "node_modules/x": {
+                "version": "1.0.0",
+                "resolved": _resolved("x", "1"),
+                "integrity": "sha512-NEWNEWNEW",
+            }
+        },
+    )
+
+    plan = plan_lock_update(old, new, limits=LockConfig())
+
+    assert plan.changed_pairs == ()
+    assert plan.removed_packages == ()
+    assert len(plan.unanalysed) == 1
+    item = plan.unanalysed[0]
+    assert item.name == "x"
+    assert item.old_version == "1.0.0"
+    assert item.new_version == "1.0.0"
+    assert item.reason.value == "INTEGRITY_CHANGED"
+
+
+def test_an_equal_version_with_equal_integrity_is_unchanged(tmp_path: Path) -> None:
+    # The honest negative: same version AND same integrity is a genuine no-op.
+    old = _parsed(
+        tmp_path,
+        "old.json",
+        {
+            "node_modules/x": {
+                "version": "1.0.0",
+                "resolved": _resolved("x", "1"),
+                "integrity": "sha512-SAME",
+            }
+        },
+    )
+    new = _parsed(
+        tmp_path,
+        "new.json",
+        {
+            "node_modules/x": {
+                "version": "1.0.0",
+                "resolved": _resolved("x", "1"),
+                "integrity": "sha512-SAME",
+            }
+        },
+    )
+
+    plan = plan_lock_update(old, new, limits=LockConfig())
+
+    assert plan.changed_pairs == ()
+    assert plan.unanalysed == ()
+    assert plan.removed_packages == ()

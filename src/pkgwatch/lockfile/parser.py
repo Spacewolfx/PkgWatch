@@ -50,6 +50,7 @@ class SkipReason(StrEnum):
     INVALID_VERSION = "INVALID_VERSION"
     INVALID_SOURCE = "INVALID_SOURCE"
     UNSUPPORTED_PATH = "UNSUPPORTED_PATH"
+    DUPLICATE_ENTRY = "DUPLICATE_ENTRY"
     LINK_SOURCE = "LINK_SOURCE"
     MISSING_RESOLVED = "MISSING_RESOLVED"
     GIT_SOURCE = "GIT_SOURCE"
@@ -58,6 +59,7 @@ class SkipReason(StrEnum):
     OTHER_HOST = "OTHER_HOST"
     MULTIPLE_VERSIONS = "MULTIPLE_VERSIONS"
     PAIR_SOURCE_UNSUPPORTED = "PAIR_SOURCE_UNSUPPORTED"
+    INTEGRITY_CHANGED = "INTEGRITY_CHANGED"
 
 
 class LockfileError(Exception):
@@ -76,6 +78,7 @@ class LockEntry:
     resolved: str | None = None
     has_install_script: bool | None = None
     link: bool = False
+    integrity: str | None = None
 
 
 @dataclass(frozen=True)
@@ -182,7 +185,21 @@ def _parse_document(document: Any) -> ParsedLockfile:
         if isinstance(parsed, SkippedEntry):
             skipped.append(parsed)
             continue
-        entries.setdefault((parsed.name, parsed.version), parsed)
+        identity = (parsed.name, parsed.version)
+        existing = entries.get(identity)
+        if existing is None:
+            entries[identity] = parsed
+        elif existing != parsed:
+            # The same (name, version) at two paths with disagreeing content: keep the
+            # first and record the conflict rather than silently dropping it (C3).
+            # Identical hoisted/nested copies still dedupe to one entry with no skip.
+            skipped.append(
+                SkippedEntry(
+                    name=parsed.name,
+                    version=parsed.version,
+                    reason=SkipReason.DUPLICATE_ENTRY,
+                )
+            )
 
     ordered_entries = tuple(entries[identity] for identity in sorted(entries))
     ordered_skips = tuple(
@@ -258,12 +275,16 @@ def _parse_entry(key: str, raw: Any) -> LockEntry | SkippedEntry:
         not isinstance(resolved, str) or len(resolved) > RESOLVED_MAX_CHARS
     ):
         return SkippedEntry(name=name, version=raw_version, reason=SkipReason.INVALID_SOURCE)
+    integrity = raw.get("integrity")
+    if integrity is not None and not isinstance(integrity, str):
+        return SkippedEntry(name=name, version=raw_version, reason=SkipReason.INVALID_ENTRY)
     return LockEntry(
         name=name,
         version=raw_version,
         resolved=resolved,
         has_install_script=has_install_script,
         link=link,
+        integrity=integrity,
     )
 
 

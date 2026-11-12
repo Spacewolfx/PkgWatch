@@ -9,8 +9,11 @@ on load with stable error codes — never an exception message from file content
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
+import os
+import tempfile
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,6 +30,9 @@ BASELINE_WITH_PLAN = "BASELINE_WITH_PLAN"
 
 # Baselines are operator files, not lockfiles, but they are still read defensively.
 MAX_BASELINE_BYTES = 1 * 1024 * 1024
+# The schema is shallow (root object -> entries array -> flat entry objects); anything
+# deeper is hostile, so reject it before json's recursive scanner can overflow the stack.
+MAX_BASELINE_DEPTH = 64
 
 BaselineKey = tuple[str, str, str | None, str]
 
@@ -106,7 +112,31 @@ def write_baseline(path: Path, entries: Sequence[BaselineEntry]) -> None:
             for item in ordered
         ],
     }
-    path.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    text = json.dumps(document, indent=2, sort_keys=True) + "\n"
+    # Write beside the target and atomically replace it, so an interrupted write never
+    # leaves a truncated baseline. The temporary file is removed on any failure; OSError
+    # propagates unchanged so the caller still maps it to BASELINE_WRITE_FAILED.
+    temporary: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary = handle.name
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        temporary = None
+    except OSError:
+        if temporary is not None:
+            with contextlib.suppress(OSError):
+                os.unlink(temporary)
+        raise
 
 
 def load_baseline(path: Path) -> tuple[BaselineEntry, ...]:
@@ -124,11 +154,12 @@ def load_baseline(path: Path) -> tuple[BaselineEntry, ...]:
         text = data.decode("utf-8-sig")
     except UnicodeDecodeError:
         raise BaselineError(BASELINE_INVALID) from None
+    _check_depth(text, MAX_BASELINE_DEPTH)
     try:
         document = json.loads(text, object_pairs_hook=_reject_duplicate_keys)
     except _DuplicateKeyError:
         raise BaselineError(BASELINE_INVALID) from None
-    except ValueError:
+    except (ValueError, RecursionError):
         raise BaselineError(BASELINE_INVALID) from None
     return _parse_entries(document)
 
@@ -144,6 +175,30 @@ def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
             raise _DuplicateKeyError
         result[key] = value
     return result
+
+
+def _check_depth(text: str, max_depth: int) -> None:
+    """A string-aware nesting scan, so brackets inside JSON strings are not counted."""
+    depth = 0
+    in_string = False
+    escaped = False
+    for char in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char in "[{":
+            depth += 1
+            if depth > max_depth:
+                raise BaselineError(BASELINE_INVALID)
+        elif char in "]}":
+            depth -= 1
 
 
 def _parse_entries(document: Any) -> tuple[BaselineEntry, ...]:

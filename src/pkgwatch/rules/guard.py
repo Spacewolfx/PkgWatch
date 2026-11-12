@@ -50,11 +50,13 @@ def guard(
         return list(body())
     except Exception as exc:
         where = f" on {path}" if path is not None else " for the release"
+        # A rule_id may be up to 96 chars but a Finding detail value caps at 64; bounding
+        # here keeps the INFO record buildable so a long-id crash cannot escape the guard.
         return [
             engine_finding(
                 ctx,
                 path=path,
                 evidence=f"rule {rule.rule_id} failed{where}",
-                details={"exception": type(exc).__name__, "rule_id": rule.rule_id},
+                details={"exception": type(exc).__name__[:64], "rule_id": rule.rule_id[:64]},
             )
         ]

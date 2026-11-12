@@ -13,9 +13,14 @@ from pkgwatch.rules import registry, scan
 
 PYPI_INSTALL_HOOK_ADDED = "PYPI_INSTALL_HOOK_ADDED"
 
-# Most specific first: ``setuptools.setup(`` is the qualified spelling of the same call,
-# so a line reading as both reports the qualified name.
+# Most specific first: a ``cmdclass`` install/develop/egg_info hook is matched before the
+# ``setup(`` call so a new command class is reported even when the call itself is old.
+# ``setuptools.setup(`` is the qualified spelling of the same call, so a line reading as
+# both reports the qualified name.
 _HOOK_PATTERNS: tuple[scan.Pattern, ...] = (
+    scan.pattern(
+        "cmdclass_hook", r"""cmdclass\s*=\s*\{[^}]*["\x27](?:install|develop|egg_info)["\x27]\s*:"""
+    ),
     scan.pattern("setuptools_setup", r"""setuptools\.setup\s*\("""),
     scan.pattern("setup_call", r"""setup\s*\("""),
     scan.pattern("project_scripts", r"""^\s*\[project\.scripts\]"""),
@@ -25,7 +30,7 @@ _HOOK_PATTERNS: tuple[scan.Pattern, ...] = (
 
 @registry.register(
     rule_id=PYPI_INSTALL_HOOK_ADDED,
-    rule_version=1,
+    rule_version=2,
     severity="high",
     ecosystems=("pypi",),
     families=(RuleFamily.LIFECYCLE_SCRIPTS,),
@@ -42,15 +47,18 @@ def pypi_install_hook_added(ctx: DiffContext) -> list[Finding]:
     """Detects an install hook that the previous version did not declare in its build files.
 
     Added lines of the new tree's own build manifests (``setup.py``, ``pyproject.toml``,
-    ``setup.cfg`` at depth <= 2) matching a hook pattern: the ``setuptools``-qualified
-    call, the bare ``setup`` call, a ``[project.scripts]`` table, or an
-    ``[project.entry-points`` table. One finding per matching line, the first pattern
-    that matches a line winning, in path then line order.
+    ``setup.cfg`` at depth <= 2) matching a hook pattern: a ``cmdclass`` install/develop/
+    egg_info command class, the ``setuptools``-qualified call, the bare ``setup`` call, a
+    ``[project.scripts]`` table, or an ``[project.entry-points`` table. One finding per
+    matching line, the first pattern that matches a line winning, in path then line order.
+    The cmdclass pattern is checked first and on its own, so a new install command class is
+    reported even when the ``setup(`` call it rides on was already in the old tree.
 
     Ignores deliberately: a hook the old tree's build files already declared — a
     version bump that rewrites the ``setup(`` line's text is not a new hook — a command
     or console script body the line points at, which line matching cannot resolve; a
-    build file nested deeper than two directories, which is not this package's own
+    ``cmdclass`` whose install key sits behind a nested brace the single-line scan cannot
+    reach; a build file nested deeper than two directories, which is not this package's own
     declaration; and anything the build files do not literally declare, including a
     ``setup.cfg`` option that runs a command indirectly (line matching cannot see what
     an option's value does — tree-sitter AST diffing is M4).
@@ -72,7 +80,7 @@ def pypi_install_hook_added(ctx: DiffContext) -> list[Finding]:
             scan.finding(
                 ctx,
                 rule_id=PYPI_INSTALL_HOOK_ADDED,
-                rule_version=1,
+                rule_version=2,
                 severity=Severity.HIGH,
                 path=path,
                 evidence=text.strip(),

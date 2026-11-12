@@ -24,14 +24,29 @@ ENV_ENUMERATION_ADDED = "ENV_ENUMERATION_ADDED"
 _REQUIRE_PREFIX = r"""require\s*\(\s*["\x27](?:node:)?"""
 _REQUIRE_SUFFIX = r"""["\x27]\s*\)"""
 
+# ESM spellings of the same import: ``import x from "m"``, ``import {x} from "m"``,
+# ``export * from "m"``, the bare side-effect ``import "m"``, and dynamic ``import("m")``.
+# The ``from`` branch also catches the tail of an import split across lines. Each module
+# name is still closed by the next quote, so ``from "https-proxy-agent"`` is not ``https``.
+_ESM_PREFIX = r"""(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s*)["\x27](?:node:)?"""
+_ESM_SUFFIX = r"""["\x27]"""
+
 
 def _require_of(module: str) -> str:
     """Source for ``require("<module>")``, in either quote style and either spelling."""
     return _REQUIRE_PREFIX + module + _REQUIRE_SUFFIX
 
 
+def _esm_import_of(module: str) -> str:
+    """Source for an ESM import/export/dynamic-import of ``<module>``."""
+    return _ESM_PREFIX + module + _ESM_SUFFIX
+
+
 _CHILD_PROCESS_PATTERNS: tuple[scan.Pattern, ...] = (
-    scan.pattern("child_process_require", _require_of("child_process")),
+    scan.pattern("child_process_require", _require_of("child_process"), capability="child_process"),
+    scan.pattern(
+        "child_process_import", _esm_import_of("child_process"), capability="child_process"
+    ),
 )
 
 # A call whose callee is exactly the dynamic-code primitive, plus the equivalent constructor.
@@ -46,7 +61,12 @@ _DYNAMIC_EVAL_PATTERNS: tuple[scan.Pattern, ...] = (
 _NET_MODULES: tuple[str, ...] = ("https", "http", "net", "tls", "dgram", "dns")
 
 _NET_ACCESS_PATTERNS: tuple[scan.Pattern, ...] = tuple(
-    scan.pattern(f"{module}_require", _require_of(module)) for module in _NET_MODULES
+    member
+    for module in _NET_MODULES
+    for member in (
+        scan.pattern(f"{module}_require", _require_of(module), capability=module),
+        scan.pattern(f"{module}_import", _esm_import_of(module), capability=module),
+    )
 )
 
 # The write entry points whose argument list may name an escaping path. Longest name first so
@@ -85,7 +105,7 @@ _ENV_PATTERNS: tuple[scan.Pattern, ...] = (
 
 @registry.register(
     rule_id=JS_CHILD_PROCESS_ADDED,
-    rule_version=1,
+    rule_version=2,
     severity="high",
     ecosystems=("npm",),
     families=(RuleFamily.DANGEROUS_CAPABILITY,),
@@ -95,21 +115,24 @@ _ENV_PATTERNS: tuple[scan.Pattern, ...] = (
 def js_child_process_added(ctx: DiffContext) -> list[Finding]:
     """Detects the first line in the new version that pulls in child_process.
 
-    One pattern, ``child_process_require``: the module named directly in a require, with or
-    without the ``node:`` prefix, in either quote style. Matches are per added line and sorted
-    by path then line; SPEC §4.5 means a require that the previous release already had
-    anywhere in the package — including in a file this release deletes — is not new.
+    Two patterns over one capability: ``child_process_require`` for ``require("child_process")``
+    and ``child_process_import`` for the ESM spellings — ``import … from``, a bare ``import``,
+    ``export … from`` and dynamic ``import(…)`` — each with or without the ``node:`` prefix and
+    in either quote style. Matches are per added line and sorted by path then line; SPEC §4.5
+    means an import the previous release already had anywhere in the package — including in a
+    file this release deletes, and in either syntax — is not new, so a require→import switch of
+    the same module is not reported.
 
     Ignores deliberately: a capability reached indirectly, which no single line can resolve
     (``require(mod[name])``, a module name concatenated at runtime, a vendored or renamed
-    polyfill, an import bound to another identifier), a require whose call is split across
-    lines, and every file that is not a ``.js``/``.jsx``/``.mjs``/``.cjs`` text view —
-    tree-sitter AST diffing is M4.
+    polyfill, an import bound to another identifier), a require or import whose call is split
+    across lines except for the ``from "…"`` tail, and every file that is not a
+    ``.js``/``.jsx``/``.mjs``/``.cjs`` text view — tree-sitter AST diffing is M4.
     """
     return scan.capability_findings(
         ctx,
         rule_id=JS_CHILD_PROCESS_ADDED,
-        rule_version=1,
+        rule_version=2,
         severity=Severity.HIGH,
         patterns=_CHILD_PROCESS_PATTERNS,
     )
@@ -149,7 +172,7 @@ def dynamic_eval_added(ctx: DiffContext) -> list[Finding]:
 
 @registry.register(
     rule_id=NET_ACCESS_ADDED,
-    rule_version=1,
+    rule_version=2,
     severity="medium",
     ecosystems=("npm",),
     families=(RuleFamily.DANGEROUS_CAPABILITY,),
@@ -157,24 +180,26 @@ def dynamic_eval_added(ctx: DiffContext) -> list[Finding]:
     common_benign_causes="An HTTP client, telemetry wrapper, or update checker.",
 )
 def net_access_added(ctx: DiffContext) -> list[Finding]:
-    """Detects a newly added require of a network-capable core module.
+    """Detects a newly added import of a network-capable core module.
 
-    One pattern per module in ``_NET_MODULES`` — https, http, net, tls, dgram, dns — each
-    named ``<module>_require`` so the finding says which socket family appeared. The quote
-    that must follow the module name is why ``require("https")`` reports ``https_require`` and
-    never ``http_require``, and why a URL-shaped string such as ``url.parse("local:8080")``
-    is not a capability on its own.
+    Two patterns per module in ``_NET_MODULES`` — https, http, net, tls, dgram, dns — named
+    ``<module>_require`` and ``<module>_import`` so the finding says which socket family
+    appeared and whether it came in through a require or an ESM import. The quote that must
+    follow the module name is why ``require("https")`` reports ``https_require`` and never
+    ``http_require``, why ``import "https-proxy-agent"`` is not ``https``, and why a URL-shaped
+    string such as ``url.parse("local:8080")`` is not a capability on its own. Each module is
+    one capability, so a require→import switch of the same module is not new (SPEC §4.5).
 
     Ignores deliberately: traffic that goes through a third-party library or a global such as
     ``fetch``, which this table does not claim to enumerate; a socket opened from a module name
-    built at runtime or reached through a computed require; a module list spelled with
-    backticks, which is not valid here; a capability the old tree already had; and
-    non-JavaScript files — tree-sitter AST diffing is M4.
+    built at runtime or reached through a computed require/import; a module list spelled with
+    backticks, which is not valid here; a capability the old tree already had in either syntax;
+    and non-JavaScript files — tree-sitter AST diffing is M4.
     """
     return scan.capability_findings(
         ctx,
         rule_id=NET_ACCESS_ADDED,
-        rule_version=1,
+        rule_version=2,
         severity=Severity.MEDIUM,
         patterns=_NET_ACCESS_PATTERNS,
     )

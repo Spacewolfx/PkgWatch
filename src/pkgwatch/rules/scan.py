@@ -8,11 +8,19 @@ crashes lives here so the family modules stay pattern tables plus documentation.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from pkgwatch.models import DiffContext, DiffLineOp, FileView, Finding, Severity
+from pkgwatch.diff.files import split_lines
+from pkgwatch.models import (
+    DIFF_LINE_MAX_CHARS,
+    DiffContext,
+    DiffLineOp,
+    FileView,
+    Finding,
+    Severity,
+)
 
 JS_SUFFIXES = (".js", ".jsx", ".mjs", ".cjs")
 PYPI_SUFFIXES = (".py",)
@@ -29,14 +37,20 @@ PARTIAL_SCAN = "partial"
 
 @dataclass(frozen=True)
 class Pattern:
-    """A named regular expression. The name is what lands in ``details["pattern"]``."""
+    """A named regular expression. The name is what lands in ``details["pattern"]``.
+
+    ``capability`` groups patterns that detect the same power in different syntaxes (a
+    ``require`` and an ESM ``import`` of one module). Old-tree presence is decided per
+    group, so switching syntax does not read as a newly gained capability (SPEC §4.5).
+    """
 
     name: str
     regex: re.Pattern[str]
+    capability: str | None = None
 
 
-def pattern(name: str, expression: str) -> Pattern:
-    return Pattern(name=name, regex=re.compile(expression))
+def pattern(name: str, expression: str, *, capability: str | None = None) -> Pattern:
+    return Pattern(name=name, regex=re.compile(expression), capability=capability)
 
 
 def finding(
@@ -92,17 +106,34 @@ def old_tree_state(ctx: DiffContext) -> str:
         return PARTIAL_SCAN
     if any(view.truncated for view in ctx.files_old.values()):
         return PARTIAL_SCAN
+    if any(
+        len(line) > DIFF_LINE_MAX_CHARS
+        for view in ctx.files_old.values()
+        if view.is_text
+        for line in split_lines(view.content)
+    ):
+        return PARTIAL_SCAN
     return FULL_SCAN
+
+
+def _clipped_lines(view: FileView) -> Iterator[str]:
+    """Old-tree lines bounded to the per-line cap, so one huge line cannot hang a regex."""
+    for line in split_lines(view.content):
+        yield line[:DIFF_LINE_MAX_CHARS]
 
 
 def old_tree_has_capability(
     ctx: DiffContext, item: Pattern, suffixes: Sequence[str] = JS_SUFFIXES
 ) -> bool:
-    """SPEC §4.5: "absent before" is decided against the whole old tree, not one file."""
+    """SPEC §4.5: "absent before" is decided against the whole old tree, not one file.
+
+    Lines longer than the per-line cap are clipped before matching; ``old_tree_state``
+    reports that as a partial scan so a clipped miss is never claimed as a full proof.
+    """
     return any(
         item.regex.search(line)
         for view in text_views(ctx.files_old.values(), suffixes=suffixes)
-        for line in view.content.splitlines()
+        for line in _clipped_lines(view)
     )
 
 
@@ -128,11 +159,20 @@ def capability_findings(
                     hits.append((number, text, view.path, item))
                     break
 
-    scan = old_tree_state(ctx)
-    present = {item.name: old_tree_has_capability(ctx, item, suffixes) for item in patterns}
+    if not hits:
+        return []
+    scan_state = old_tree_state(ctx)
+    groups: dict[str, list[Pattern]] = {}
+    for item in patterns:
+        groups.setdefault(item.capability or item.name, []).append(item)
+    matched = {item.capability or item.name for _, _, _, item in hits}
+    present = {
+        key: any(old_tree_has_capability(ctx, member, suffixes) for member in groups[key])
+        for key in matched
+    }
     findings: list[Finding] = []
     for number, text, path, item in sorted(hits, key=lambda hit: (hit[2], hit[0])):
-        if present[item.name]:
+        if present[item.capability or item.name]:
             continue
         findings.append(
             finding(
@@ -144,7 +184,7 @@ def capability_findings(
                 evidence=text.strip(),
                 line_start=number,
                 line_end=number,
-                details={"pattern": item.name, "old_tree_scan": scan},
+                details={"pattern": item.name, "old_tree_scan": scan_state},
             )
         )
     return findings
@@ -180,7 +220,7 @@ def old_build_files_have(ctx: DiffContext, item: Pattern) -> bool:
     return any(
         item.regex.search(line)
         for view in build_file_views(ctx.files_old.values())
-        for line in view.content.splitlines()
+        for line in _clipped_lines(view)
     )
 
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -167,3 +168,47 @@ def test_load_rejects_malformed_files_with_a_stable_code(tmp_path: Path, payload
         load_baseline(path)
 
     assert caught.value.code == BASELINE_INVALID
+
+
+def test_a_deeply_nested_baseline_is_invalid_not_a_crash(tmp_path: Path) -> None:
+    # C4: nesting past the recursion limit must yield the stable code, never a RecursionError
+    # escaping to the operator (mirrors the lockfile parser's pre-parse depth guard).
+    path = tmp_path / "baseline.json"
+    path.write_text(
+        '{"version": 1, "entries": ' + "[" * 10000 + "]" * 10000 + "}", encoding="utf-8"
+    )
+
+    with pytest.raises(BaselineError) as caught:
+        load_baseline(path)
+
+    assert caught.value.code == BASELINE_INVALID
+
+
+def test_a_successful_write_leaves_no_temp_file(tmp_path: Path) -> None:
+    # C5 guard: the atomic write must not leak its temporary file on success.
+    path = tmp_path / "baseline.json"
+    write_baseline(path, (_entry(),))
+
+    assert [item.name for item in tmp_path.iterdir()] == ["baseline.json"]
+    assert load_baseline(path) == (_entry(),)
+
+
+def test_a_failed_replace_keeps_the_original_baseline_and_cleans_up(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # C5: a crash at the atomic-replace step must leave the complete original document in
+    # place (never a truncated file) and remove the temporary file.
+    path = tmp_path / "baseline.json"
+    write_baseline(path, (_entry(),))
+    original = path.read_text(encoding="utf-8")
+
+    def _fail_replace(*args: object, **kwargs: object) -> None:
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(os, "replace", _fail_replace)
+
+    with pytest.raises(OSError, match="replace failed"):
+        write_baseline(path, ())
+
+    assert path.read_text(encoding="utf-8") == original
+    assert [item.name for item in tmp_path.iterdir()] == ["baseline.json"]

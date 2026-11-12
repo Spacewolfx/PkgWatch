@@ -313,3 +313,69 @@ def test_a_duplicate_package_entry_is_not_silently_taking_the_last_value(tmp_pat
         parse_lockfile(path, limits=LockConfig())
 
     assert caught.value.code is LockfileErrorCode.LOCKFILE_DUPLICATE_KEY
+
+
+def test_integrity_is_retained_on_the_entry(tmp_path: Path) -> None:
+    # C2a: the per-entry integrity hash must survive parsing so the plan can compare it.
+    path = _write(
+        tmp_path,
+        _lock(
+            3,
+            {
+                "node_modules/a": {
+                    "version": "1.0.0",
+                    "resolved": f"{REGISTRY}/a/-/a-1.0.0.tgz",
+                    "integrity": "sha512-AAAA",
+                },
+            },
+        ),
+    )
+
+    parsed = parse_lockfile(path, limits=LockConfig())
+
+    assert getattr(parsed.entries[0], "integrity", None) == "sha512-AAAA"
+
+
+def test_a_non_string_integrity_is_an_invalid_entry(tmp_path: Path) -> None:
+    # integrity is untrusted lockfile text; a non-string value must not reach the plan.
+    path = _write(
+        tmp_path,
+        _lock(3, {"node_modules/a": {"version": "1.0.0", "integrity": 12345}}),
+    )
+
+    parsed = parse_lockfile(path, limits=LockConfig())
+
+    assert parsed.entries == ()
+    assert [(item.name, item.reason) for item in parsed.skipped] == [
+        ("a", SkipReason.INVALID_ENTRY)
+    ]
+
+
+def test_a_conflicting_duplicate_identity_is_recorded_not_silently_dropped(
+    tmp_path: Path,
+) -> None:
+    # C3: two paths map to the same (name, version) but disagree on the tarball source.
+    # Keeping the first silently would hide the conflict; record a skip for the second.
+    path = _write(
+        tmp_path,
+        _lock(
+            3,
+            {
+                "node_modules/a": {
+                    "version": "1.0.0",
+                    "resolved": f"{REGISTRY}/a/-/a-1.0.0.tgz",
+                },
+                "node_modules/x/node_modules/a": {
+                    "version": "1.0.0",
+                    "resolved": f"{REGISTRY}/a/-/a-1.0.0-other.tgz",
+                },
+            },
+        ),
+    )
+
+    parsed = parse_lockfile(path, limits=LockConfig())
+
+    assert [entry.name for entry in parsed.entries] == ["a"]
+    assert [(item.name, item.version, item.reason.value) for item in parsed.skipped] == [
+        ("a", "1.0.0", "DUPLICATE_ENTRY")
+    ]

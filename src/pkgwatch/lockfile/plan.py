@@ -23,6 +23,7 @@ from pkgwatch.lockfile.parser import (
     LockfileError,
     LockfileErrorCode,
     ParsedLockfile,
+    SkippedEntry,
     SkipReason,
 )
 from pkgwatch.models import Ecosystem
@@ -87,6 +88,8 @@ def plan_lock_update(
 ) -> LockPlan:
     old_by_name = _by_name(old.entries)
     new_by_name = _by_name(new.entries)
+    old_skip_reason = _first_skip_reason(old.skipped)
+    new_skip_reason = _first_skip_reason(new.skipped)
 
     pairs: list[ChangedPair] = []
     added: list[NewPackage] = []
@@ -104,9 +107,26 @@ def plan_lock_update(
         new_entries = new_by_name.get(name, {})
 
         if not new_entries:
-            removed.append(name)
+            # The new side exists but every version failed parsing: this is a changed
+            # package we cannot read, not a removal (SPEC §9.1 L2c). A name absent from
+            # both the entries and the skips is a genuine removal.
+            new_reason = new_skip_reason.get(name)
+            if new_reason is not None:
+                unanalysed.append(
+                    UnanalysedPackage(name, _sole_version(old_entries), None, new_reason)
+                )
+            else:
+                removed.append(name)
             continue
         if not old_entries:
+            # Symmetric: the old side failed parsing, so the package had a predecessor we
+            # could not read. It is unanalysed, never a clean brand-new result.
+            old_reason = old_skip_reason.get(name)
+            if old_reason is not None:
+                unanalysed.append(
+                    UnanalysedPackage(name, None, _sole_version(new_entries), old_reason)
+                )
+                continue
             for version in sorted(new_entries):
                 entry = new_entries[version]
                 added.append(NewPackage(name, version, entry.has_install_script))
@@ -120,6 +140,21 @@ def plan_lock_update(
         changed_old = old_versions - new_versions
         changed_new = new_versions - old_versions
         if not changed_old and not changed_new:
+            # The version set is identical, but a tarball republished at the same version
+            # changes its integrity hash. We fetch by version and cannot retrieve the
+            # historical tarball to diff it, so surface the swap as unanalysed rather than
+            # a silent "no change" (C2). Both hashes must be present to claim a swap.
+            for version in sorted(old_versions):
+                old_integrity = old_entries[version].integrity
+                new_integrity = new_entries[version].integrity
+                if (
+                    old_integrity is not None
+                    and new_integrity is not None
+                    and old_integrity != new_integrity
+                ):
+                    unanalysed.append(
+                        UnanalysedPackage(name, version, version, SkipReason.INTEGRITY_CHANGED)
+                    )
             continue
 
         if len(old_versions) > 1 or len(new_versions) > 1:
@@ -196,6 +231,21 @@ def _by_name(entries: tuple[LockEntry, ...]) -> dict[str, dict[str, LockEntry]]:
     for entry in entries:
         grouped.setdefault(entry.name, {})[entry.version] = entry
     return grouped
+
+
+def _first_skip_reason(skipped: tuple[SkippedEntry, ...]) -> dict[str, SkipReason]:
+    """The first parser-skip reason per name, in the parser's already-sorted order."""
+    reasons: dict[str, SkipReason] = {}
+    for item in skipped:
+        reasons.setdefault(item.name, item.reason)
+    return reasons
+
+
+def _sole_version(entries: dict[str, LockEntry]) -> str | None:
+    """The one version when a side has exactly one; None when it has several or none."""
+    if len(entries) == 1:
+        return next(iter(entries))
+    return None
 
 
 def _ordered_skips(items: list[PlanSkip]) -> tuple[PlanSkip, ...]:

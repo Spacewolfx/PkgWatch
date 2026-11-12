@@ -52,6 +52,18 @@ def test_unknown_keys_are_rejected() -> None:
         Config.from_toml("[sandbox]\nmax_file_count = 7\nsurprise = 1\n")
 
 
+def test_the_only_supported_config_version_is_one() -> None:
+    assert Config().config_version == 1
+    assert Config.from_toml("config_version = 1\n").config_version == 1
+
+
+def test_an_unknown_config_version_is_rejected() -> None:
+    with pytest.raises(ValidationError, match="config_version"):
+        Config.from_toml("config_version = 2\n")
+    with pytest.raises(ValidationError, match="config_version"):
+        Config.from_toml("config_version = 0\n")
+
+
 def test_thresholds_must_be_ordered() -> None:
     with pytest.raises(ValidationError, match="alert_threshold"):
         Config.from_toml("[scoring]\nalert_threshold = 80\nescalate_threshold = 50\n")

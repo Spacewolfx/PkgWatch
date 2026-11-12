@@ -19,11 +19,23 @@ _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 _WINDOWS_ILLEGAL_CHARS = re.compile(r'[<>:"|?*]')
 # NTFS component limit; not policy, so it is a constant rather than a config knob.
 _MAX_COMPONENT_LEN = 255
+# Windows full-path limit (including the terminating null) for non-extended paths.
+_WINDOWS_MAX_PATH = 260
 _RESERVED_BASENAMES = frozenset(
     {"con", "prn", "aux", "nul", "clock$", "conin$", "conout$"}
     | {f"com{index}" for index in range(1, 10)}
     | {f"lpt{index}" for index in range(1, 10)}
 )
+
+
+def _utf16_len(text: str) -> int:
+    return len(text.encode("utf-16-le")) // 2
+
+
+def _component_too_long(part: str) -> bool:
+    # POSIX caps a component at 255 bytes; NTFS at 255 UTF-16 units. Reject when
+    # either measure is exceeded so extraction never hits an OS name-length error.
+    return len(part.encode("utf-8")) > _MAX_COMPONENT_LEN or _utf16_len(part) > _MAX_COMPONENT_LEN
 
 
 def normalize_member_name(name: str, limits: SandboxLimits) -> str:
@@ -80,14 +92,14 @@ def normalize_member_name(name: str, limits: SandboxLimits) -> str:
                 "member name contains a character Windows reserves",
                 offending_path=name,
             )
-        if len(part) > _MAX_COMPONENT_LEN:
+        if _component_too_long(part):
             reject(
                 RejectionCode.PATH_TOO_LONG,
                 "member name component exceeds the filesystem limit",
                 offending_path=name,
                 limit_name="max_component_len",
                 limit_value=float(_MAX_COMPONENT_LEN),
-                observed_value=float(len(part)),
+                observed_value=float(max(len(part.encode("utf-8")), _utf16_len(part))),
             )
         if part.endswith((" ", ".")):
             reject(
@@ -185,5 +197,14 @@ def within_root(root: Path, relative: str) -> Path:
             RejectionCode.EXTRACTION_ROOT_ESCAPE,
             "resolved destination escapes the extraction root",
             offending_path=relative,
+        )
+    if os.name == "nt" and len(str(candidate)) >= _WINDOWS_MAX_PATH:
+        reject(
+            RejectionCode.PATH_TOO_LONG,
+            "destination path exceeds the Windows MAX_PATH limit",
+            offending_path=relative,
+            limit_name="windows_max_path",
+            limit_value=float(_WINDOWS_MAX_PATH),
+            observed_value=float(len(str(candidate))),
         )
     return candidate

@@ -31,6 +31,29 @@ from pkgwatch.sandbox.zip_reader import materialize_zip, plan_zip
 
 _HASH_CHUNK = 1 << 20
 
+# SPEC §TB3: observed uncompressed bytes must agree with npm dist.unpackedSize
+# within 5%. The declared size is optional, so its absence skips the check.
+UNPACKED_SIZE_TOLERANCE = 0.05
+
+
+def cross_check_unpacked_size(observed_bytes: int, declared: object) -> None:
+    """Reject when extraction disagrees with the registry's declared unpacked size.
+
+    ``declared`` is package-controlled: anything but a positive integer (absent,
+    null, a string, a bool, a float) means the registry advertised no usable size,
+    so there is nothing to cross-check.
+    """
+    if not isinstance(declared, int) or isinstance(declared, bool) or declared <= 0:
+        return
+    if abs(observed_bytes - declared) > declared * UNPACKED_SIZE_TOLERANCE:
+        reject(
+            RejectionCode.LIMITS_DISAGREE_WITH_REGISTRY,
+            "observed uncompressed bytes disagree with registry unpackedSize",
+            limit_name="unpacked_size_tolerance",
+            limit_value=UNPACKED_SIZE_TOLERANCE,
+            observed_value=float(observed_bytes),
+        )
+
 
 def extract_archive(
     archive_path: Path,

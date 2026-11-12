@@ -166,6 +166,7 @@ class PlanBuilder:
 
     def _validate_parents(self) -> None:
         for path in self._entries:
+            check_deadline(self._deadline)
             parts = path.split("/")
             for index in range(1, len(parts)):
                 ancestor = "/".join(parts[:index])
@@ -193,6 +194,7 @@ class PlanBuilder:
             seen = {entry.path}
             current = entry
             while True:
+                check_deadline(self._deadline)
                 target_path = current.link_target
                 if target_path is None:
                     reject(

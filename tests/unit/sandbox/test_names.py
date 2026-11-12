@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -90,3 +91,36 @@ def test_normalised_paths_always_stay_inside_the_root(name: str, tmp_path: Path)
     destination = within_root(tmp_path, relative)
     assert destination.is_relative_to(tmp_path)
     assert ".." not in relative.split("/")
+
+
+def test_component_length_counts_utf8_bytes_and_utf16_units() -> None:
+    # 131 characters, but 515 UTF-8 bytes and 259 UTF-16 units: both filesystem
+    # limits (255 bytes on POSIX, 255 UTF-16 units on NTFS) are exceeded.
+    limits = SandboxLimits()
+    name = "pkg/" + "\U0001f600" * 128 + ".py"
+    with pytest.raises(ArchiveRejected) as excinfo:
+        normalize_member_name(name, limits)
+    assert excinfo.value.rejection.reason_code is RejectionCode.PATH_TOO_LONG
+
+
+def test_component_length_counts_multibyte_bmp_characters() -> None:
+    limits = SandboxLimits()
+    name = "pkg/" + "é" * 200  # 200 characters but 400 UTF-8 bytes
+    with pytest.raises(ArchiveRejected) as excinfo:
+        normalize_member_name(name, limits)
+    assert excinfo.value.rejection.reason_code is RejectionCode.PATH_TOO_LONG
+
+
+def test_component_at_the_byte_limit_is_accepted() -> None:
+    limits = SandboxLimits()
+    name = "pkg/" + "a" * 252 + ".py"  # exactly 255 bytes / UTF-16 units
+    assert normalize_member_name(name, limits) == name
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows MAX_PATH limit is platform-specific")
+def test_destination_over_windows_max_path_is_rejected(tmp_path: Path) -> None:
+    limits = SandboxLimits()
+    relative = normalize_member_name("a" * 120 + "/" + "b" * 120 + "/" + "c" * 8, limits)
+    with pytest.raises(ArchiveRejected) as excinfo:
+        within_root(tmp_path, relative)
+    assert excinfo.value.rejection.reason_code is RejectionCode.PATH_TOO_LONG

@@ -11,7 +11,9 @@ from pkgwatch.models import (
     DatasetRecord,
     Finding,
     LabelSource,
+    RejectionCode,
     Release,
+    SandboxRejection,
     ScoreResult,
     Severity,
 )
@@ -151,3 +153,27 @@ def test_rule_derived_confidence_is_fixed() -> None:
 def test_advisory_labels_cannot_be_benign() -> None:
     with pytest.raises(ValidationError, match="malicious or unknown"):
         make_record(label="benign", label_source="advisory_db", label_confidence=0.9)
+
+
+def test_sandbox_rejection_detail_is_capped_not_rejected() -> None:
+    rejection = SandboxRejection(reason_code=RejectionCode.PATH_TOO_LONG, detail="x" * 300)
+    assert len(rejection.detail) == 200
+    assert rejection.detail.endswith("…")
+
+
+def test_sandbox_rejection_offending_path_is_capped_and_sanitised() -> None:
+    rejection = SandboxRejection(
+        reason_code=RejectionCode.NAME_HAS_CONTROL_CHARS,
+        detail="bad name",
+        offending_path="p" * 300,
+    )
+    assert rejection.offending_path is not None
+    assert len(rejection.offending_path) == 200
+    assert rejection.offending_path.endswith("…")
+
+    control = SandboxRejection(
+        reason_code=RejectionCode.NAME_HAS_CONTROL_CHARS,
+        detail="bad name",
+        offending_path="a\x00b\x1fc",
+    )
+    assert control.offending_path == "a?b?c"

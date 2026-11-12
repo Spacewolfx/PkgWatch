@@ -127,7 +127,7 @@ def _add_member(
         builder.add(path, ManifestKind.DIR, 0, stat.S_IMODE(unix_mode))
         return
 
-    if unix_mode == 0 or stat.S_ISREG(unix_mode):
+    if unix_mode == 0 or stat.S_IFMT(unix_mode) == 0 or stat.S_ISREG(unix_mode):
         kind = ManifestKind.NESTED_ARCHIVE if looks_like_nested_archive(path) else ManifestKind.FILE
         builder.add(path, kind, info.file_size, stat.S_IMODE(unix_mode))
         return

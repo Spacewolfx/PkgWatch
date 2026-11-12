@@ -60,7 +60,9 @@ def dist_for(payload: bytes, *, method: str = "integrity", corrupt: bool = False
     integrity = "sha512-" + base64.b64encode(hashlib.sha512(payload).digest()).decode("ascii")
     shasum = hashlib.sha1(payload).hexdigest()  # noqa: S324 - npm's legacy dist.shasum
     if corrupt:
-        integrity = "sha512-" + base64.b64encode(b"deliberately-wrong").decode("ascii")
+        # Well-formed 64-byte sha512, but of the wrong content: a true mismatch.
+        wrong = hashlib.sha512(b"deliberately-wrong").digest()
+        integrity = "sha512-" + base64.b64encode(wrong).decode("ascii")
         shasum = "0" * 40
     if method == "none":
         return {}
@@ -86,8 +88,8 @@ class FakeRegistry:
     new_version: str = NEW_VERSION
     old_tarball: bytes = b""
     new_tarball: bytes = b""
-    old_dist: dict[str, str] = field(default_factory=dict)
-    new_dist: dict[str, str] = field(default_factory=dict)
+    old_dist: dict[str, Any] = field(default_factory=dict)
+    new_dist: dict[str, Any] = field(default_factory=dict)
     redirects: dict[str, str] = field(default_factory=dict)
     aliases: dict[str, bytes] = field(default_factory=dict)
     doc_override: bytes | None = None

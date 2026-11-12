@@ -85,6 +85,9 @@ class ManifestSnapshot:
     sections: dict[str, dict[str, str]]
     repository: str | None
     problem: str | None = None
+    # Full sanitized repository value, uncapped: comparison and normalization use this so
+    # a change past the evidence cap is not missed. ``repository`` is the bounded display copy.
+    repository_raw: str | None = None
 
 
 @dataclass(frozen=True)
@@ -106,11 +109,15 @@ def _empty_sections() -> dict[str, dict[str, str]]:
     return {name: {} for name in MANIFEST_SECTIONS}
 
 
+def _clean(value: Any) -> str:
+    """One printable line, uncapped: stringify non-str and neutralize control characters."""
+    text = value if isinstance(value, str) else json.dumps(value, sort_keys=True, default=str)
+    return "".join(" " if ord(ch) < 0x20 or ord(ch) == 0x7F else ch for ch in text)
+
+
 def _token(value: Any) -> str:
     """One bounded, printable line. Never echoes raw package text wholesale."""
-    text = value if isinstance(value, str) else json.dumps(value, sort_keys=True, default=str)
-    cleaned = "".join(" " if ord(ch) < 0x20 or ord(ch) == 0x7F else ch for ch in text)
-    return cleaned[:VALUE_MAX_CHARS]
+    return _clean(value)[:VALUE_MAX_CHARS]
 
 
 def _section(raw: Any) -> dict[str, str]:
@@ -129,8 +136,8 @@ def _text(ctx: DiffContext, side: str) -> tuple[str | None, bool]:
         return None, False
     old_view = ctx.files_old.get(ROOT_MANIFEST)
     new_view = ctx.files_new.get(ROOT_MANIFEST)
-    # An UNCHANGED manifest has identical bytes; diff keeps only the old-side view.
-    if change.change_type is ChangeType.UNCHANGED and new_view is None:
+    # An UNCHANGED or MODE_ONLY manifest has identical bytes; diff keeps only the old-side view.
+    if change.change_type in {ChangeType.UNCHANGED, ChangeType.MODE_ONLY} and new_view is None:
         new_view = old_view
     if side == "old":
         present = change.path_old is not None
@@ -166,8 +173,14 @@ def read_root_manifest(ctx: DiffContext, side: str) -> ManifestSnapshot:
         )
     sections = {name: _section(parsed.get(name)) for name in MANIFEST_SECTIONS}
     raw_repository = parsed.get(REPOSITORY_FIELD)
-    repository = None if raw_repository is None else _token(raw_repository)
-    return ManifestSnapshot(present=True, sections=sections, repository=repository)
+    repository_raw = None if raw_repository is None else _clean(raw_repository)
+    repository = None if repository_raw is None else repository_raw[:VALUE_MAX_CHARS]
+    return ManifestSnapshot(
+        present=True,
+        sections=sections,
+        repository=repository,
+        repository_raw=repository_raw,
+    )
 
 
 def diff_root_manifests(ctx: DiffContext) -> ManifestChanges:

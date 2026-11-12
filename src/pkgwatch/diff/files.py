@@ -356,8 +356,22 @@ def _two_sided(raw_old: bytes | None, raw_new: bytes | None) -> tuple[DiffLine, 
     return tuple(lines)
 
 
+def split_lines(text: str) -> list[str]:
+    """Split on ``\\n`` only, treating CRLF as one break and a final newline as a terminator.
+
+    ``str.splitlines`` also breaks on \\v, \\f, \\x85, \\u2028 and \\u2029, which appear inside
+    string literals; counting those as lines misaligns every reported line number against
+    the file a consumer's editor shows. A trailing carriage return is dropped so CRLF and
+    LF files produce identical line text.
+    """
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return [line[:-1] if line.endswith("\r") else line for line in lines]
+
+
 def _lines(raw: bytes | None) -> list[str] | None:
-    return None if raw is None else raw.decode("utf-8", errors="replace").splitlines()
+    return None if raw is None else split_lines(raw.decode("utf-8", errors="replace"))
 
 
 def _clip(text: str) -> str:

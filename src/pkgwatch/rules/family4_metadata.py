@@ -98,22 +98,26 @@ def repository_url_changed(ctx: DiffContext) -> list[Finding]:
     new_snapshot = read_root_manifest(ctx, "new")
     if old_snapshot.problem is not None or new_snapshot.problem is not None:
         return []
-    old = old_snapshot.repository
-    new = new_snapshot.repository
-    if old == new:
+    # Compare the full sanitized value, not the bounded display copy: two repositories
+    # that differ only past the evidence cap are still a change.
+    old_raw = old_snapshot.repository_raw
+    new_raw = new_snapshot.repository_raw
+    if old_raw == new_raw:
         return []
     if (
-        old is not None
-        and new is not None
-        and normalize_repository(old) == normalize_repository(new)
+        old_raw is not None
+        and new_raw is not None
+        and normalize_repository(old_raw) == normalize_repository(new_raw)
     ):
         return []
-    if old is None:
+    if old_raw is None:
         change = "added"
-    elif new is None:
+    elif new_raw is None:
         change = "removed"
     else:
         change = "changed"
+    old = old_snapshot.repository
+    new = new_snapshot.repository
     return [
         scan.finding(
             ctx,

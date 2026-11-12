@@ -28,11 +28,23 @@ _DUNDER_IMPORT = "__imp" + "ort__"
 
 # ``os.system`` and ``os.popen`` are direct shell entry points; the process module's
 # attributes are the rest. Longest first so a line naming two of them reports the more
-# specific call.
+# specific call. The ``from … import`` spellings bring the same entry points into scope
+# without a qualified call, so each shares its capability with the call form: switching
+# syntax is not a newly gained power (SPEC §4.5). Lines are clipped before matching, so the
+# ``[^\n]*`` import-list scan stays bounded.
 _SHELL_PATTERNS: tuple[scan.Pattern, ...] = (
-    scan.pattern("os_system", r"""os\.system\s*\("""),
-    scan.pattern("os_popen", r"""os\.popen\s*\("""),
-    scan.pattern("process_module", _SUBPROCESS + r"""\."""),
+    scan.pattern("os_system", r"""os\.system\s*\(""", capability="os_system"),
+    scan.pattern("os_popen", r"""os\.popen\s*\(""", capability="os_popen"),
+    scan.pattern("process_module", _SUBPROCESS + r"""\.""", capability="process_module"),
+    scan.pattern(
+        "from_" + _SUBPROCESS,
+        r"\bfrom\s+" + _SUBPROCESS + r"\s+import\b",
+        capability="process_module",
+    ),
+    scan.pattern(
+        "from_os_system", r"\bfrom\s+os\s+import\b[^\n]*\bsystem\b", capability="os_system"
+    ),
+    scan.pattern("from_os_popen", r"\bfrom\s+os\s+import\b[^\n]*\bpopen\b", capability="os_popen"),
 )
 
 # A call whose callee is exactly one of the dynamic-code primitives. The lookbehind
@@ -67,18 +79,19 @@ _NET_PATTERNS: tuple[scan.Pattern, ...] = (
     scan.pattern("urllib_request", r"""urllib\.request"""),
 )
 
-# Whole-environment reads: the mapping itself, or a ``getenv`` call. Reading one
-# documented variable is configuration; sweeping every key is collection.
+# Whole-environment reads only: the mapping consumed as a whole (iterated, copied,
+# serialized, or keys/items listed). A single-key read — ``os.environ["HOME"]`` or
+# ``os.environ.get("HOME")`` — is configuration, not collection, so the lookaheads reject
+# a subscript or a ``.get(`` call. ``getenv`` always names one key, so it is not enumeration
+# and has no pattern here.
 _ENV_PATTERNS: tuple[scan.Pattern, ...] = (
-    scan.pattern("os_environ", r"""os\.environ"""),
-    scan.pattern("os_getenv", r"""os\.getenv\s*\("""),
-    scan.pattern("getenv", r"""(?<![\w.])getenv\s*\("""),
+    scan.pattern("os_environ", r"""os\.environ(?!\s*\[)(?!\s*\.\s*get\s*\()"""),
 )
 
 
 @registry.register(
     rule_id=PYPI_SHELL_EXEC_ADDED,
-    rule_version=1,
+    rule_version=2,
     severity="high",
     ecosystems=("pypi",),
     families=(RuleFamily.DANGEROUS_CAPABILITY,),
@@ -88,21 +101,25 @@ _ENV_PATTERNS: tuple[scan.Pattern, ...] = (
 def pypi_shell_exec_added(ctx: DiffContext) -> list[Finding]:
     """Detects a newly added line that can start another program.
 
-    Three patterns: ``os_system`` for the direct system call, ``os_popen`` for its
-    pipe-returning twin, and ``process_module`` for any attribute of the process
-    module. Matches are per added line and sorted by path then line; a shell call the
-    previous release already had anywhere in the package is not new.
+    Call forms ``os_system`` and ``os_popen`` for the direct system/pipe calls and
+    ``process_module`` for any attribute of the process module, plus the from-import
+    spellings that bring the same entry points into scope: a process-module from-import,
+    ``from_os_system`` and ``from_os_popen``. Each from-import shares its capability with
+    the matching call form, so a package that already shelled out is not reported for
+    switching syntax. Matches are per added line and sorted by path then line; a shell
+    call the previous release already had anywhere in the package is not new.
 
     Ignores deliberately: a process reached indirectly, which no single line can
     resolve (a target pulled off ``os`` by name, an alias bound to another name, a
-    module name built at runtime), a call split across lines, a shell call the old
-    tree already had, and every file that is not a ``.py`` text view — tree-sitter AST
-    diffing is M4.
+    module name built at runtime), a from-import whose name list is split across lines
+    so the entry point lands on another one, ``from os import path`` and other non-shell
+    names, a call split across lines, a shell call the old tree already had, and every
+    file that is not a ``.py`` text view — tree-sitter AST diffing is M4.
     """
     return scan.capability_findings(
         ctx,
         rule_id=PYPI_SHELL_EXEC_ADDED,
-        rule_version=1,
+        rule_version=2,
         severity=Severity.HIGH,
         patterns=_SHELL_PATTERNS,
         suffixes=scan.PYPI_SUFFIXES,
@@ -179,7 +196,7 @@ def pypi_net_access_added(ctx: DiffContext) -> list[Finding]:
 
 @registry.register(
     rule_id=PYPI_ENV_ENUM_ADDED,
-    rule_version=1,
+    rule_version=2,
     severity="low",
     ecosystems=("pypi",),
     families=(RuleFamily.DANGEROUS_CAPABILITY,),
@@ -189,20 +206,22 @@ def pypi_net_access_added(ctx: DiffContext) -> list[Finding]:
 def pypi_env_enum_added(ctx: DiffContext) -> list[Finding]:
     """Detects a line that reads the whole environment instead of one key.
 
-    Three patterns: ``os_environ`` for the mapping itself, ``os_getenv`` for the
-    qualified call, and ``getenv`` for a from-imported call. Reading one documented
-    variable is configuration; handing over every token present in the environment is
-    credential collection, which is why this is low on its own and needs a second
-    family to corroborate before it means much.
+    One pattern, ``os_environ``: the environment mapping consumed as a whole — iterated,
+    copied, serialized, or asked for its keys/items/values. A subscript or a ``.get(…)``
+    call names a single key and is rejected, because reading one documented variable is
+    configuration; handing over every token present in the environment is credential
+    collection, which is why this is low on its own and needs a second family to
+    corroborate before it means much.
 
-    Ignores deliberately: ``os.path`` helpers that do not read the environment, an
-    environment read behind a helper or a computed member, the same read in the old
-    tree, and non-Python files — tree-sitter AST diffing is M4.
+    Ignores deliberately: ``os.environ["HOME"]`` and ``os.environ.get("HOME")`` single-key
+    reads, ``getenv`` in any spelling (it always names one key), ``os.path`` helpers that
+    do not read the environment, an environment read behind a helper or a computed member,
+    the same read in the old tree, and non-Python files — tree-sitter AST diffing is M4.
     """
     return scan.capability_findings(
         ctx,
         rule_id=PYPI_ENV_ENUM_ADDED,
-        rule_version=1,
+        rule_version=2,
         severity=Severity.LOW,
         patterns=_ENV_PATTERNS,
         suffixes=scan.PYPI_SUFFIXES,

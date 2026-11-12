@@ -26,9 +26,100 @@ INSTALL_SCRIPT_KEYS = ("preinstall", "postinstall", "install")
 _SCRIPT_KEY_RE = re.compile(r'(?<!\\)"(' + "|".join(INSTALL_SCRIPT_KEYS) + r')"\s*:')
 
 
+def _scripts_value_start(content: str) -> int | None:
+    """Index of the ``{`` opening the top-level ``scripts`` object, or None.
+
+    A string-aware scan: only a ``scripts`` key directly in the root object counts, so a
+    nested ``scripts`` table is not mistaken for the hook table. Braces inside strings do
+    not change depth.
+    """
+    depth = 0
+    in_string = False
+    escaped = False
+    string_start = -1
+    key: str | None = None
+    i = 0
+    n = len(content)
+    while i < n:
+        ch = content[i]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+                if depth == 1:
+                    j = i + 1
+                    while j < n and content[j] in " \t\r\n":
+                        j += 1
+                    if j < n and content[j] == ":":
+                        key = content[string_start + 1 : i]
+            i += 1
+            continue
+        if ch == '"':
+            in_string = True
+            string_start = i
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+        elif ch == ":" and depth == 1 and key is not None:
+            j = i + 1
+            while j < n and content[j] in " \t\r\n":
+                j += 1
+            if key == "scripts" and j < n and content[j] == "{":
+                return j
+            key = None
+            i = j
+            continue
+        i += 1
+    return None
+
+
+def _scripts_span(content: str) -> tuple[int, int] | None:
+    """1-based inclusive line range of the top-level ``scripts`` object, or None.
+
+    Minified JSON keeps the whole object on one line, so the span is that single line; a
+    pretty-printed table spans its opening-brace line through its closing-brace line. Lines
+    are counted on ``\\n`` only, matching the differ's line numbers.
+    """
+    start = _scripts_value_start(content)
+    if start is None:
+        return None
+    depth = 0
+    in_string = False
+    escaped = False
+    line = content.count("\n", 0, start) + 1
+    start_line = line
+    i = start
+    n = len(content)
+    while i < n:
+        ch = content[i]
+        if ch == "\n":
+            line += 1
+        elif in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+        elif ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return (start_line, line)
+        i += 1
+    return None
+
+
 @registry.register(
     rule_id=NPM_INSTALL_SCRIPT_ADDED,
-    rule_version=1,
+    rule_version=2,
     severity="high",
     ecosystems=("npm",),
     families=(RuleFamily.LIFECYCLE_SCRIPTS,),
@@ -44,36 +135,46 @@ _SCRIPT_KEY_RE = re.compile(r'(?<!\\)"(' + "|".join(INSTALL_SCRIPT_KEYS) + r')"\
 def npm_install_script_added(ctx: DiffContext) -> list[Finding]:
     """Detects an install-time lifecycle script that the previous version did not declare.
 
-    Only ``preinstall``, ``postinstall`` and ``install`` count, and only in
-    ``package/package.json`` — the manifest npm runs hooks from. Added lines decide it, so a
-    script that existed before is not re-reported. The key on the line is matched, never the
-    command, and one added line yields one finding in line order.
+    Only ``preinstall``, ``postinstall`` and ``install`` count, only in
+    ``package/package.json`` — the manifest npm runs hooks from — and only inside the
+    top-level ``scripts`` object. Added lines decide it, so a script that existed before is
+    not re-reported. Every hook key on an added line is matched (never the command), in line
+    then left-to-right order, so a minified line declaring two hooks yields two findings.
 
     Ignores deliberately: ``prepare``/``prepublishOnly`` (they run for the author, not for
-    the consumer), ``test``/``build`` and any other non-install script, a nested
-    ``package.json`` under a fixtures or ``node_modules`` directory (not this package's
-    hook), a manifest that vanished from the new tree, and the *command text* — whether the
-    script says ``echo`` or ``curl`` is family 2 and 3 work, and line matching cannot see
-    what a required file does (tree-sitter AST diffing is M4).
+    the consumer), ``test``/``build`` and any other non-install script, a dependency named
+    ``install``/``preinstall``/``postinstall`` (a package name, not a hook), a ``scripts``
+    table nested inside another field, a nested ``package.json`` under a fixtures or
+    ``node_modules`` directory (not this package's hook), a manifest that vanished from the
+    new tree, and the *command text* — whether the script says ``echo`` or ``curl`` is
+    family 2 and 3 work, and line matching cannot see what a required file does (tree-sitter
+    AST diffing is M4).
     """
+    view = ctx.files_new.get(ROOT_MANIFEST)
+    if view is None or not view.is_text:
+        return []
+    span = _scripts_span(view.content)
+    if span is None:
+        return []
+    low, high = span
     findings: list[Finding] = []
     for line, text in root_manifest_additions(ctx):
-        match = _SCRIPT_KEY_RE.search(text)
-        if match is None:
+        if not low <= line <= high:
             continue
-        findings.append(
-            finding(
-                ctx,
-                rule_id=NPM_INSTALL_SCRIPT_ADDED,
-                rule_version=1,
-                severity=Severity.HIGH,
-                path=ROOT_MANIFEST,
-                evidence=text.strip(),
-                line_start=line,
-                line_end=line,
-                details={"script": match.group(1)},
+        for match in _SCRIPT_KEY_RE.finditer(text):
+            findings.append(
+                finding(
+                    ctx,
+                    rule_id=NPM_INSTALL_SCRIPT_ADDED,
+                    rule_version=2,
+                    severity=Severity.HIGH,
+                    path=ROOT_MANIFEST,
+                    evidence=text.strip(),
+                    line_start=line,
+                    line_end=line,
+                    details={"script": match.group(1)},
+                )
             )
-        )
     return findings
 
 

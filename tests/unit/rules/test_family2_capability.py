@@ -84,6 +84,15 @@ NEAR_MISSES: list[tuple[str, Callable[[DiffContext], list[Finding]], str]] = [
     (ENV_ENUMERATION_ADDED, env_enumeration_added, "var home = process.env.HOME;\n"),
 ]
 
+# ESM detection widened these two rules; the other three are unchanged.
+EXPECTED_VERSIONS = {
+    JS_CHILD_PROCESS_ADDED: 2,
+    DYNAMIC_EVAL_ADDED: 1,
+    NET_ACCESS_ADDED: 2,
+    FS_WRITE_OUTSIDE_PACKAGE_ADDED: 1,
+    ENV_ENUMERATION_ADDED: 1,
+}
+
 
 @pytest.mark.parametrize(
     ("rule_id", "fn", "severity", "line", "pattern"), DETECTIONS, ids=[d[0] for d in DETECTIONS]
@@ -98,7 +107,7 @@ def test_rule_metadata_matches_spec(
     registered = {rule.rule_id: rule for rule in RULES}
     rule = registered[rule_id]
     assert rule.severity is severity
-    assert rule.rule_version == 1
+    assert rule.rule_version == EXPECTED_VERSIONS[rule_id]
     assert rule.families == (RuleFamily.DANGEROUS_CAPABILITY,)
     assert rule.ecosystems == (Ecosystem.NPM,)
     assert callable(fn)
@@ -210,7 +219,7 @@ def test_positive_fixture_emits_the_exact_child_process_finding(tmp_path: Path) 
     assert findings == [
         Finding(
             rule_id=JS_CHILD_PROCESS_ADDED,
-            rule_version=1,
+            rule_version=2,
             severity=Severity.HIGH,
             path="package/index.js",
             evidence='const cp = require("child_process");',
@@ -235,3 +244,122 @@ def test_rules_never_raise_on_binary_like_text(tmp_path: Path) -> None:
     ctx = ctx_from_files(tmp_path, BASE, {**BASE, "package/index.js": b"\x00\x01eval(\n"})
     for _, fn, _, _, _ in DETECTIONS:
         assert fn(ctx) == []
+
+
+ESM_CHILD_PROCESS_LINES = [
+    'import cp from "child_process";',
+    "import cp from 'child_process';",
+    'import { spawn } from "child_process";',
+    'import cp from "node:child_process";',
+    'import "child_process";',
+    'export { spawn } from "child_process";',
+    'export * from "node:child_process";',
+    'const cp = await import("child_process");',
+    "import('child_process');",
+    '} from "child_process";',
+]
+
+
+@pytest.mark.parametrize("line", ESM_CHILD_PROCESS_LINES)
+def test_esm_child_process_imports_are_detected(tmp_path: Path, line: str) -> None:
+    ctx = ctx_from_files(tmp_path, BASE, {**BASE, "package/index.js": line.encode()})
+    findings = js_child_process_added(ctx)
+    assert len(findings) == 1
+    assert findings[0].rule_id == JS_CHILD_PROCESS_ADDED
+    assert findings[0].details["pattern"] == "child_process_import"
+    assert findings[0].evidence == line.strip()
+
+
+ESM_NET_LINES = [
+    ('import https from "https";', "https_import"),
+    ('import { request } from "node:http";', "http_import"),
+    ('const net = await import("net");', "net_import"),
+    ('import "tls";', "tls_import"),
+    ('export * from "dgram";', "dgram_import"),
+    ('import dns from "node:dns";', "dns_import"),
+]
+
+
+@pytest.mark.parametrize(("line", "pattern"), ESM_NET_LINES)
+def test_esm_net_imports_are_detected(tmp_path: Path, line: str, pattern: str) -> None:
+    ctx = ctx_from_files(tmp_path, BASE, {**BASE, "package/index.js": line.encode()})
+    findings = net_access_added(ctx)
+    assert len(findings) == 1
+    assert findings[0].rule_id == NET_ACCESS_ADDED
+    assert findings[0].details["pattern"] == pattern
+
+
+ESM_NEAR_MISSES: list[tuple[Callable[[DiffContext], list[Finding]], str]] = [
+    (js_child_process_added, 'import util from "util";'),
+    (js_child_process_added, 'import cp from "child_processivity";'),
+    (js_child_process_added, 'var from = "child_process";'),
+    (net_access_added, 'import https from "https-proxy-agent";'),
+    (net_access_added, 'import { x } from "httpie";'),
+]
+
+
+@pytest.mark.parametrize(("fn", "line"), ESM_NEAR_MISSES)
+def test_esm_near_misses_are_ignored(
+    tmp_path: Path, fn: Callable[[DiffContext], list[Finding]], line: str
+) -> None:
+    ctx = ctx_from_files(tmp_path, BASE, {**BASE, "package/index.js": line.encode()})
+    assert fn(ctx) == []
+
+
+def test_esm_capability_already_in_the_old_tree_is_not_new(tmp_path: Path) -> None:
+    line = b'import cp from "child_process";\n'
+    ctx = ctx_from_files(
+        tmp_path,
+        {"package/legacy.js": line},
+        {"package/legacy.js": line, "package/index.js": line},
+    )
+    assert js_child_process_added(ctx) == []
+
+
+def test_require_in_old_tree_suppresses_esm_import_of_the_same_module(tmp_path: Path) -> None:
+    # SPEC §4.5: the capability is child_process access, not the import syntax. A package
+    # that already required the module has not gained it by switching to an ESM import.
+    old = b'const cp = require("child_process");\n'
+    new = b'import cp from "child_process";\n'
+    ctx = ctx_from_files(
+        tmp_path,
+        {"package/legacy.js": old},
+        {"package/legacy.js": old, "package/index.js": new},
+    )
+    assert js_child_process_added(ctx) == []
+
+
+def test_esm_import_in_old_tree_suppresses_require_of_the_same_module(tmp_path: Path) -> None:
+    old = b'import cp from "child_process";\n'
+    new = b'const cp = require("child_process");\n'
+    ctx = ctx_from_files(
+        tmp_path,
+        {"package/legacy.js": old},
+        {"package/legacy.js": old, "package/index.js": new},
+    )
+    assert js_child_process_added(ctx) == []
+
+
+def test_require_net_in_old_tree_suppresses_esm_import_of_the_same_module(tmp_path: Path) -> None:
+    old = b'const https = require("https");\n'
+    new = b'import https from "https";\n'
+    ctx = ctx_from_files(
+        tmp_path,
+        {"package/legacy.js": old},
+        {"package/legacy.js": old, "package/index.js": new},
+    )
+    assert net_access_added(ctx) == []
+
+
+def test_esm_import_of_a_different_net_module_is_still_new(tmp_path: Path) -> None:
+    # http in the old tree does not cover https: they are distinct capabilities.
+    old = b'const http = require("http");\n'
+    new = b'import https from "https";\n'
+    ctx = ctx_from_files(
+        tmp_path,
+        {"package/legacy.js": old},
+        {"package/legacy.js": old, "package/index.js": new},
+    )
+    findings = net_access_added(ctx)
+    assert len(findings) == 1
+    assert findings[0].details["pattern"] == "https_import"

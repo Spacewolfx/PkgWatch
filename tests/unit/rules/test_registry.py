@@ -84,9 +84,11 @@ def test_v02_rule_ids_severities_and_versions_follow_the_operator_decision() -> 
         "PYPI_DEPENDENCY_ADDED": Severity.LOW,
     }
     by_id = {rule.rule_id: rule for rule in RULES}
+    # Detection widened past v1 for these rules; the operator decision keeps the rest at 1.
+    bumped = {"PYPI_SHELL_EXEC_ADDED": 2, "PYPI_ENV_ENUM_ADDED": 2, "PYPI_INSTALL_HOOK_ADDED": 2}
     for rule_id, severity in expected.items():
         assert by_id[rule_id].severity is severity
-        assert by_id[rule_id].rule_version == 1
+        assert by_id[rule_id].rule_version == bumped.get(rule_id, 1)
     assert len(RULES) == 18
     assert "MAINTAINER_ADDED" not in by_id  # deferred, SPEC §4.5.1
 

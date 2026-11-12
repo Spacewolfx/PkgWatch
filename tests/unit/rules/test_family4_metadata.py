@@ -3,15 +3,33 @@
 from __future__ import annotations
 
 import json
+import tempfile
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
-from pkgwatch.diff.manifest import MANIFEST_INVALID_JSON, diff_root_manifests, manifest_parse_errors
-from pkgwatch.models import ParseErrorKind, RuleFamily, Severity
+from pkgwatch.diff import build_diff_context
+from pkgwatch.diff.manifest import (
+    MANIFEST_INVALID_JSON,
+    diff_root_manifests,
+    manifest_parse_errors,
+    read_root_manifest,
+)
+from pkgwatch.models import (
+    ChangeType,
+    DiffContext,
+    Ecosystem,
+    ParseErrorKind,
+    RuleFamily,
+    SandboxLimits,
+    Severity,
+)
 from pkgwatch.rules import RULES
 from pkgwatch.rules.family4_metadata import dependency_added, repository_url_changed
+from tests.support.archives import Entry
 from tests.support.context import ctx_from_files
+from tests.support.trees import extract_tree
 
 OLD = {"package/base.js": b"var base = 1;\n"}
 GITHUB_REPOSITORY_BASES = (
@@ -30,6 +48,22 @@ GITHUB_REPOSITORY_VARIANTS = tuple(
 def _manifest(repository: str, version: str) -> bytes:
     return json.dumps({"name": "demo-pkg", "version": version, "repository": repository}).encode(
         "utf-8"
+    )
+
+
+def _ctx_from_entries(
+    tmp_path: Path, old_entries: list[Entry], new_entries: list[Entry]
+) -> DiffContext:
+    case = Path(tempfile.mkdtemp(dir=tmp_path))
+    return build_diff_context(
+        ecosystem=Ecosystem.NPM,
+        package_name="demo-pkg",
+        old_version="1.0.0",
+        new_version="1.1.0",
+        published_at=datetime(2026, 11, 5, 12, 0, tzinfo=UTC),
+        old=extract_tree(case, "old", old_entries),
+        new=extract_tree(case, "new", new_entries),
+        limits=SandboxLimits(),
     )
 
 
@@ -166,6 +200,36 @@ def test_real_repository_changes_still_fire(tmp_path: Path, old: str, new: str) 
 
     assert len(findings) == 1
     assert findings[0].evidence == f"repository field changed: {old} -> {new}"
+
+
+def test_a_repository_change_past_the_evidence_cap_still_fires(tmp_path: Path) -> None:
+    # Both URLs share their first 70 characters, so a 64-char-bounded comparison would
+    # call them equal and miss the change. Detection must use the full sanitized value.
+    prefix = "https://example.invalid/" + "x" * 46
+    ctx = ctx_from_files(
+        tmp_path,
+        {"package/package.json": _manifest(prefix + "/old-repo", "1.0.0")},
+        {"package/package.json": _manifest(prefix + "/new-repo", "1.1.0")},
+    )
+    findings = repository_url_changed(ctx)
+
+    assert len(findings) == 1
+    assert findings[0].details == {"field": "repository", "change": "changed"}
+
+
+def test_a_mode_only_manifest_change_does_not_invent_a_repository_removal(tmp_path: Path) -> None:
+    manifest_bytes = _manifest("https://example.invalid/repo", "1.0.0")
+    ctx = _ctx_from_entries(
+        tmp_path,
+        [Entry("package/package.json", manifest_bytes, mode=0o644)],
+        [Entry("package/package.json", manifest_bytes, mode=0o755)],
+    )
+    change = next(c for c in ctx.changes if c.path_new == "package/package.json")
+    assert change.change_type is ChangeType.MODE_ONLY
+    # A mode-only change keeps no new-side text view; the reader must fall back to the
+    # identical old bytes instead of treating the repository as removed.
+    assert read_root_manifest(ctx, "new").repository == "https://example.invalid/repo"
+    assert repository_url_changed(ctx) == []
 
 
 @pytest.mark.parametrize(

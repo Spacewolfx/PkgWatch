@@ -107,6 +107,19 @@ def test_a_crashing_rule_does_not_stop_the_run(tmp_path: Path) -> None:
     assert analysis_incomplete(findings) is True
 
 
+def test_a_long_rule_id_crash_still_becomes_an_info_finding(tmp_path: Path) -> None:
+    context = ctx_from_files(tmp_path, *TWO_FILES)
+    long_id = "A" * 96
+
+    def _crash(inner: DiffContext) -> list[Finding]:
+        raise ValueError("nope")
+
+    findings = run_rules(context, registry=_registry(_rule(long_id, _crash)))
+    assert [finding.rule_id for finding in findings] == [RULE_ENGINE_RULE_ID]
+    assert findings[0].details["rule_id"] == long_id[:64]
+    assert analysis_incomplete(findings) is True
+
+
 def test_per_file_failure_keeps_the_other_files(tmp_path: Path) -> None:
     context = ctx_from_files(tmp_path, *TWO_FILES)
 

@@ -38,7 +38,7 @@ def test_rules_are_registered_in_family_one() -> None:
     registered = {rule.rule_id: rule for rule in RULES}
     install = registered[NPM_INSTALL_SCRIPT_ADDED]
     assert install.severity is Severity.HIGH
-    assert install.rule_version == 1
+    assert install.rule_version == 2
     assert install.families == (RuleFamily.LIFECYCLE_SCRIPTS,)
 
     metadata = registered[NPM_SCRIPT_INJECTION_FROM_METADATA]
@@ -52,7 +52,7 @@ def test_positive_fixture_emits_the_exact_install_script_finding(tmp_path: Path)
     assert findings == [
         Finding(
             rule_id=NPM_INSTALL_SCRIPT_ADDED,
-            rule_version=1,
+            rule_version=2,
             severity=Severity.HIGH,
             path="package/package.json",
             evidence='"postinstall": "echo installed",',
@@ -113,6 +113,38 @@ def test_scripts_that_do_not_run_at_install_time_are_ignored(tmp_path: Path) -> 
         },
     )
     assert npm_install_script_added(ctx) == []
+
+
+def test_a_dependency_named_like_an_install_script_is_not_a_hook(tmp_path: Path) -> None:
+    # "install" and "preinstall" are real npm package names; declaring them as
+    # dependencies is not a lifecycle hook, so only the scripts section may fire.
+    new = (
+        b"{\n"
+        b'  "name": "demo-pkg",\n'
+        b'  "version": "1.1.0",\n'
+        b'  "scripts": {\n'
+        b'    "test": "echo run tests"\n'
+        b"  },\n"
+        b'  "dependencies": {\n'
+        b'    "install": "^1.0.0",\n'
+        b'    "preinstall": "^2.0.0"\n'
+        b"  }\n"
+        b"}\n"
+    )
+    ctx = ctx_from_files(
+        tmp_path, {"package/package.json": EMPTY_SCRIPTS}, {"package/package.json": new}
+    )
+    assert npm_install_script_added(ctx) == []
+
+
+def test_multiple_hooks_on_one_minified_line_are_all_reported(tmp_path: Path) -> None:
+    new = b'{"name":"demo-pkg","scripts":{"preinstall":"echo one","postinstall":"echo two"}}\n'
+    ctx = ctx_from_files(
+        tmp_path, {"package/package.json": EMPTY_SCRIPTS}, {"package/package.json": new}
+    )
+    findings = npm_install_script_added(ctx)
+    assert [finding.details["script"] for finding in findings] == ["preinstall", "postinstall"]
+    assert all(finding.line_start == 1 and finding.line_end == 1 for finding in findings)
 
 
 def test_nested_and_vendored_manifests_are_not_this_package_hook(tmp_path: Path) -> None:

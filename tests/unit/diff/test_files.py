@@ -189,6 +189,23 @@ def test_mode_only_change_is_reported_without_line_diff(tmp_path: Path) -> None:
     assert (change.lines_added, change.lines_removed) == (0, 0)
 
 
+def test_unicode_line_separators_do_not_split_a_physical_line(tmp_path: Path) -> None:
+    # \u2028 (LINE SEPARATOR) inside a string is not a line break: only \n delimits
+    # lines, so reported line numbers match the file a consumer's editor would show.
+    raw = 'var a = "x\u2028y";\nvar b = 2;\n'.encode("utf-8")
+    ctx = build(tmp_path, [], [Entry("package/a.js", raw)])
+    view = ctx.files_new["package/a.js"]
+    added = [line.line_new for line in view.diff_lines if line.op is DiffLineOp.ADD]
+    assert added == [1, 2]
+
+
+def test_crlf_line_endings_count_as_one_break(tmp_path: Path) -> None:
+    ctx = build(tmp_path, [], [Entry("package/a.js", b"var a = 1;\r\nvar b = 2;\r\n")])
+    view = ctx.files_new["package/a.js"]
+    added = [(line.line_new, line.text) for line in view.diff_lines if line.op is DiffLineOp.ADD]
+    assert added == [(1, "var a = 1;"), (2, "var b = 2;")]
+
+
 def test_nested_archives_are_reported_not_read(tmp_path: Path) -> None:
     ctx = build(
         tmp_path,

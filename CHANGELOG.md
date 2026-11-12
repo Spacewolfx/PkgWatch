@@ -139,11 +139,10 @@ unmeasured; findings are signals for human review.
 
 ### Removed
 
-- AI design-process documents are out of the public repository: `docs/MASTER_PROMPT.md` and
-  the `docs/superpowers/` plan and spec files were deleted, and the per-milestone gate logs
-  (`docs/GATES-*.txt`) are now local-only artifacts excluded through `.gitignore`.
-  `docs/pypi.md` and `docs/rules.md` replace them as user-facing documentation, and personal
-  details were scrubbed from tracked files in favour of the GitHub username.
+- Working drafts no longer ship with the repository: the planning and design documents and
+  the per-milestone gate logs under `docs/` are local-only artifacts excluded through
+  `.gitignore`, and `docs/pypi.md` and `docs/rules.md` are the user-facing pages that
+  replace them.
 
 ## 0.1.0 — 2026-11-08
 

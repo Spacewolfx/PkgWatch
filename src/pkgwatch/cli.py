@@ -12,7 +12,9 @@ file outputs.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime
+import html
 import json
 import os
 import re
@@ -38,6 +40,7 @@ from pkgwatch.fetch.npm import (
     FetchPair,
     HttpClient,
     UrllibClient,
+    declared_unpacked_size,
     fetch_pair,
     parse_spec,
 )
@@ -73,7 +76,7 @@ from pkgwatch.rules.runner import (
     analysis_incomplete,
     run_rules,
 )
-from pkgwatch.sandbox import ArchiveRejected, extract_archive
+from pkgwatch.sandbox import ArchiveRejected, cross_check_unpacked_size, extract_archive
 from pkgwatch.score.engine import score
 
 DISCLAIMER = (
@@ -405,6 +408,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="also run experimental rule families 3 (obfuscation) and 4 (metadata); off by default",
     )
     compare.add_argument(
+        "--config",
+        metavar="PATH",
+        default=None,
+        help="read this TOML config (sandbox limits, scoring, fetch)",
+    )
+    compare.add_argument(
         "--no-cache",
         dest="no_cache",
         action="store_true",
@@ -649,11 +658,21 @@ def _cmd_compare(
     config: Config | None,
 ) -> int:
     active_client: HttpClient = client if client is not None else UrllibClient()
-    active_config = config if config is not None else Config()
     json_mode = bool(args.as_json)
     markdown_mode = bool(args.markdown)
     sarif_mode = bool(args.sarif)
     structured_json = json_mode or sarif_mode
+
+    try:
+        active_config = (
+            config
+            if config is not None
+            else (Config.load(Path(args.config)) if args.config else Config())
+        )
+    except FileNotFoundError:
+        return _error(CONFIG_NOT_FOUND, structured_json)
+    except (OSError, ValueError):
+        return _error(CONFIG_INVALID, structured_json)
 
     mode_count = sum([json_mode, markdown_mode, sarif_mode])
     if mode_count > 1:
@@ -745,7 +764,7 @@ def _cmd_lock(
     mode_count = sum([json_mode, markdown_mode, sarif_mode])
     if mode_count > 1:
         return _error(OUTPUT_OPTIONS_CONFLICT, structured_json)
-    if args.plan and sarif_mode:
+    if args.plan and (sarif_mode or markdown_mode):
         return _error(OUTPUT_OPTIONS_CONFLICT, structured_json)
 
     config_ignored = active_config.lock.ignored
@@ -860,6 +879,7 @@ def _emit_output(
     """Emit report to stdout and/or atomically write to disk."""
     full_text = f"{content}\n{DISCLAIMER}\n" if include_disclaimer else f"{content}\n"
     if output_path is not None:
+        temp_path: Path | None = None
         try:
             output_path.parent.mkdir(parents=True, exist_ok=True)
             with tempfile.NamedTemporaryFile(
@@ -872,7 +892,11 @@ def _emit_output(
                 temp_path = Path(handle.name)
                 handle.write(full_text)
             os.replace(temp_path, output_path)
+            temp_path = None
         except OSError:
+            if temp_path is not None:
+                with contextlib.suppress(OSError):
+                    os.unlink(temp_path)
             return False
 
     if not quiet and output_path is None:
@@ -947,8 +971,18 @@ def _compare(
                 workdir=workdir,
                 cache=cache,
             )
-        old_tree = _extract(pair.old.path, workdir / "extract-old", config)
-        new_tree = _extract(pair.new.path, workdir / "extract-new", config)
+        old_tree = _extract(
+            pair.old.path,
+            workdir / "extract-old",
+            config,
+            declared_unpacked=declared_unpacked_size(pair.old.metadata),
+        )
+        new_tree = _extract(
+            pair.new.path,
+            workdir / "extract-new",
+            config,
+            declared_unpacked=declared_unpacked_size(pair.new.metadata),
+        )
         ctx = build_diff_context(
             ecosystem=ecosystem,
             package_name=old_name,
@@ -1022,10 +1056,18 @@ def _compare(
         return report, 1 if (severity_hit or score_hit) else 0
 
 
-def _extract(path: Path, target: Path, config: Config) -> ExtractionResult:
+def _extract(
+    path: Path,
+    target: Path,
+    config: Config,
+    *,
+    declared_unpacked: object = None,
+) -> ExtractionResult:
     """The only route from a tarball to a file tree; rejection codes stay stable."""
     try:
-        return extract_archive(path, target, config.sandbox)
+        result = extract_archive(path, target, config.sandbox)
+        cross_check_unpacked_size(result.total_bytes, declared_unpacked)
+        return result
     except ArchiveRejected as exc:
         raise CompareError(exc.rejection.reason_code.value) from None
 
@@ -1327,9 +1369,16 @@ def _experimental_marker(rule_id: str, families: Mapping[str, frozenset[RuleFami
 
 
 def _md_escape(text: str) -> str:
-    """Sanitize package-controlled strings for safe inclusion inside Markdown table cells."""
-    clean = _one_line(text)
-    return clean.replace("\\", "\\\\").replace("|", "\\|").replace("`", "\\`")
+    """Sanitize package-controlled strings for Markdown that GitHub renders as HTML.
+
+    HTML-escape first (the report becomes a PR comment), then escape the table and
+    emphasis specials so no markup survives; the pipe is included because compare
+    renders findings inside Markdown tables.
+    """
+    escaped = html.escape(_one_line(text), quote=True)
+    for char in "\\`*_[]|":
+        escaped = escaped.replace(char, f"\\{char}")
+    return escaped
 
 
 def _format_details(details: Mapping[str, str | int | float | bool]) -> str:
@@ -1532,6 +1581,20 @@ def _format_compare_markdown(report: CompareReport) -> str:
     return "\n".join(lines)
 
 
+def _sarif_notification(code: str, message: str, *, level: str = "note") -> dict[str, Any]:
+    """One SARIF toolExecutionNotification: a stable code plus human-readable text."""
+    return {
+        "descriptor": {"id": code, "shortDescription": {"text": message}},
+        "message": {"text": message},
+        "level": level,
+    }
+
+
+def _sarif_invocation(notifications: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """A single successful invocation carrying the incompleteness notifications."""
+    return [{"executionSuccessful": True, "toolExecutionNotifications": notifications}]
+
+
 def _format_compare_sarif(report: CompareReport) -> dict[str, Any]:
     """Build a valid SARIF v2.1.0 document from a single package CompareReport."""
     rule_ids = sorted({item["rule_id"] for item in report["findings"]})
@@ -1591,6 +1654,32 @@ def _format_compare_sarif(report: CompareReport) -> dict[str, Any]:
             }
         )
 
+    notifications: list[dict[str, Any]] = []
+    if report["changed_files_omitted"] > 0:
+        notifications.append(
+            _sarif_notification(
+                "CHANGED_FILES_OMITTED",
+                f"{report['changed_files_omitted']} changed file(s) omitted from this report "
+                "(re-run with --verbose for the full list)",
+            )
+        )
+    parse_problems = report.get("package_json_changes", {}).get("parse_problems", [])
+    if parse_problems:
+        notifications.append(
+            _sarif_notification(
+                "MANIFEST_PARSE_PROBLEMS",
+                f"{len(parse_problems)} package.json parse problem(s); the view is incomplete",
+                level="warning",
+            )
+        )
+    if report["warnings"]:
+        notifications.append(
+            _sarif_notification(
+                "ANALYSIS_WARNINGS",
+                f"{len(report['warnings'])} warning(s) recorded during analysis",
+            )
+        )
+
     return {
         "$schema": SARIF_SCHEMA_URI,
         "version": SARIF_VERSION,
@@ -1604,6 +1693,7 @@ def _format_compare_sarif(report: CompareReport) -> dict[str, Any]:
                         "rules": sarif_rules,
                     }
                 },
+                "invocations": _sarif_invocation(notifications),
                 "properties": {
                     "ecosystem": report["ecosystem"],
                     "package": report["package"],
@@ -1611,6 +1701,7 @@ def _format_compare_sarif(report: CompareReport) -> dict[str, Any]:
                     "new_version": report["new_version"],
                     "score": report["score"],
                     "rule_set_version": report["rule_set_version"],
+                    "changed_files_omitted": report["changed_files_omitted"],
                     "measured": False,
                     "disclaimer": DISCLAIMER,
                 },
@@ -1677,6 +1768,63 @@ def _format_lock_sarif(report: LockReport) -> dict[str, Any]:
             }
         )
 
+    findings_omitted = sum(pair["findings_omitted"] for pair in report["pairs"]) + sum(
+        item["analysis"]["findings_omitted"]
+        for item in report["new_packages"]
+        if item["analysis"] is not None
+    )
+    errored = sum(1 for pair in report["pairs"] if pair["error"]) + sum(
+        1
+        for item in report["new_packages"]
+        if item["analysis"] is not None and item["analysis"]["error"]
+    )
+    parse_count = sum(len(pair["parse_problems"]) for pair in report["pairs"]) + sum(
+        len(item["analysis"]["parse_problems"])
+        for item in report["new_packages"]
+        if item["analysis"] is not None
+    )
+
+    notifications: list[dict[str, Any]] = []
+    if report["analysis_incomplete"]:
+        notifications.append(
+            _sarif_notification(
+                "ANALYSIS_INCOMPLETE",
+                "one or more packages could not be fully analysed; results are incomplete",
+                level="warning",
+            )
+        )
+    if report["unanalysed"] > 0:
+        notifications.append(
+            _sarif_notification(
+                "UNANALYSED_PACKAGES",
+                f"{report['unanalysed']} package(s) were not analysed",
+                level="warning",
+            )
+        )
+    if errored:
+        notifications.append(
+            _sarif_notification(
+                "PACKAGE_ERRORS",
+                f"{errored} package(s) failed to analyse (see per-pair error codes)",
+                level="warning",
+            )
+        )
+    if findings_omitted > 0:
+        notifications.append(
+            _sarif_notification(
+                "FINDINGS_OMITTED",
+                f"{findings_omitted} finding(s) omitted from this report (re-run with --verbose)",
+            )
+        )
+    if parse_count > 0:
+        notifications.append(
+            _sarif_notification(
+                "PARSE_PROBLEMS",
+                f"{parse_count} manifest parse problem(s) were recorded",
+                level="warning",
+            )
+        )
+
     return {
         "$schema": SARIF_SCHEMA_URI,
         "version": SARIF_VERSION,
@@ -1690,9 +1838,13 @@ def _format_lock_sarif(report: LockReport) -> dict[str, Any]:
                         "rules": sarif_rules,
                     }
                 },
+                "invocations": _sarif_invocation(notifications),
                 "properties": {
                     "old_lockfile": report["old_lockfile"],
                     "new_lockfile": target_lockfile,
+                    "analysis_incomplete": report["analysis_incomplete"],
+                    "unanalysed": report["unanalysed"],
+                    "findings_omitted": findings_omitted,
                     "measured": False,
                     "disclaimer": DISCLAIMER,
                 },

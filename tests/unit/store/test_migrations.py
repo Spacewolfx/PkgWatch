@@ -48,6 +48,29 @@ def test_newer_database_than_code_is_refused(conn: sqlite3.Connection) -> None:
         migrate(conn)
 
 
+def test_duplicate_migration_versions_are_rejected(conn: sqlite3.Connection) -> None:
+    first = Migration(
+        version=1,
+        description="create a",
+        statements=("CREATE TABLE a (id INTEGER PRIMARY KEY)",),
+    )
+    duplicate = Migration(
+        version=1,
+        description="create b",
+        statements=("CREATE TABLE b (id INTEGER PRIMARY KEY)",),
+    )
+    with pytest.raises(ValueError, match="unique"):
+        migrate(conn, migrations=(first, duplicate))
+
+
+def test_empty_migrations_still_refuse_a_newer_database(conn: sqlite3.Connection) -> None:
+    migrate(conn)
+    conn.execute("PRAGMA user_version = 999")
+    conn.commit()
+    with pytest.raises(db.SchemaTooNew, match="999"):
+        migrate(conn, migrations=())
+
+
 def test_migrations_apply_in_order_and_keep_data(tmp_path: Path) -> None:
     connection = db.connect(tmp_path / "step.sqlite3")
     first = Migration(

@@ -623,8 +623,22 @@ changed, show what the update changes at install time and in code, in one short 
     there could stay hidden while the script that line points at changes underneath.
     `--baseline-allow-lifecycle` opts in to honouring them. Writing a baseline
     (`--update-baseline`) is unaffected.
+19. Audit fixes (2026-11-12, domain D — CLI, config, store, Action):
+    `src/pkgwatch/__main__.py` makes `python -m pkgwatch` work, which is how
+    `action.yml` invokes the tool. `compare` gains `--config PATH` with the same
+    `CONFIG_NOT_FOUND` / `CONFIG_INVALID` behaviour as `lock`. Every Markdown
+    sanitizer escapes HTML first (`html.escape(quote=True)`) and then the Markdown
+    specials, because GitHub renders PR comments as HTML. `--sarif` reports what it
+    left out: `runs[].invocations[].toolExecutionNotifications[]` plus matching
+    `runs[].properties`, while `executionSuccessful` stays `true` — an omitted
+    finding is a note about coverage, not a crashed tool. `--output FILE` writes
+    through a temporary file in the destination directory and removes that temporary
+    file if the rename fails. `--plan` combined with `--markdown` or `--sarif` exits
+    `2` with `OUTPUT_OPTIONS_CONFLICT`. `config_version` accepts only `1`.
+    `store.db.migrate` rejects migrations that are unordered or share a version, and
+    raises `SchemaTooNew` for a newer database even when no migrations are supplied.
 
-Implementation status (2026-11-08): decisions 1–18 are implemented. `lockfile/parser.py` reads
+Implementation status (2026-11-12): decisions 1–19 are implemented. `lockfile/parser.py` reads
 and validates one lockfile, `lockfile/plan.py` produces the deterministic plan including
 unanalysed packages, `lock/run.py` analyses each changed pair and each brand-new package
 (against an empty tree) through the unchanged `fetch/`, `sandbox/`, `diff/`, `rules/` and

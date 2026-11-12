@@ -260,6 +260,22 @@ def test_a_failed_pair_is_visible_in_json_mode(
     assert payload["pairs"][0]["score"] == 0
 
 
+def test_a_disagreeing_unpacked_size_fails_the_pair(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    broken = case_registry(tmp_path, BENIGN, name="broken-pkg")
+    broken.new_dist["unpackedSize"] = 1  # real tree is far larger than one byte
+    client, old_lock, new_lock = _setup(tmp_path, broken)
+
+    code, out, _ = _run(capsys, client, old_lock, new_lock, "--json")
+    payload = json.loads(out)
+
+    assert code == 2
+    assert payload["analysis_incomplete"] is True
+    assert payload["pairs"][0]["error"] == "LIMITS_DISAGREE_WITH_REGISTRY"
+    assert payload["pairs"][0]["findings"] == []
+
+
 def test_ignore_removes_a_rule_from_findings_score_and_exit_code(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -743,6 +759,25 @@ def test_plan_over_max_pairs_exits_two_without_network(
 
     assert code == 2
     assert err.strip() == "TOO_MANY_PAIRS"
+    assert client.requests == []
+
+
+def test_plan_rejects_markdown_and_sarif(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client, old_lock, new_lock = _plan_inputs(tmp_path)
+
+    code, out, err = _run(capsys, client, old_lock, new_lock, "--plan", "--markdown")
+
+    assert code == 2
+    assert err.strip() == "OUTPUT_OPTIONS_CONFLICT"
+    assert "changed pairs:" not in out
+    assert client.requests == []
+
+    code2, _, err2 = _run(capsys, client, old_lock, new_lock, "--plan", "--sarif")
+
+    assert code2 == 2
+    assert err2.strip() == "OUTPUT_OPTIONS_CONFLICT"
     assert client.requests == []
 
 
@@ -1270,3 +1305,45 @@ def test_sarif_includes_new_package_findings(
         and item["properties"].get("old_version") is None
         for item in results
     )
+
+
+def _sarif_note_ids(run: dict[str, object]) -> set[str]:
+    invocations = run.get("invocations")
+    assert isinstance(invocations, list), "SARIF run must carry an invocation"
+    assert invocations, "SARIF run must carry an invocation"
+    notifications = invocations[0].get("toolExecutionNotifications", [])
+    return {str(item["descriptor"]["id"]) for item in notifications}
+
+
+def test_sarif_lock_surfaces_unanalysed_packages(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client, old_lock, new_lock = _setup(
+        tmp_path, case_registry(tmp_path, INSTALLER, name="installer-pkg")
+    )
+
+    code, out, _ = _run(capsys, client, old_lock, new_lock, "--sarif")
+    run = json.loads(out)["runs"][0]
+
+    assert code == 1
+    assert run["invocations"][0]["executionSuccessful"] is True
+    assert run["properties"]["unanalysed"] == 1
+    assert run["properties"]["analysis_incomplete"] is False
+    assert "UNANALYSED_PACKAGES" in _sarif_note_ids(run)
+
+
+def test_sarif_lock_marks_an_incomplete_analysis(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    broken = case_registry(tmp_path, INSTALLER, name="broken-pkg")
+    broken.new_dist = dist_for(broken.new_tarball, corrupt=True)
+    client, old_lock, new_lock = _setup(tmp_path, broken)
+
+    code, out, _ = _run(capsys, client, old_lock, new_lock, "--sarif")
+    run = json.loads(out)["runs"][0]
+
+    assert code == 2
+    assert run["properties"]["analysis_incomplete"] is True
+    note_ids = _sarif_note_ids(run)
+    assert "ANALYSIS_INCOMPLETE" in note_ids
+    assert "PACKAGE_ERRORS" in note_ids

@@ -7,6 +7,7 @@ Every tarball here is built from the committed synthetic fixture trees and unpac
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -361,6 +362,32 @@ def test_digest_mismatch_on_the_new_side_exits_two(
     assert err.strip() == "DIGEST_MISMATCH"
     assert json.loads(out) == {"error": "DIGEST_MISMATCH", "measured": False}
     assert len(registry.requests) == 3
+
+
+def test_disagreeing_unpacked_size_exits_two(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    registry = make_registry(tmp_path, BENIGN)
+    registry.new_dist["unpackedSize"] = 1  # real tree is far larger than one byte
+
+    code, out, err = _run(capsys, registry)
+
+    assert code == 2
+    assert err.strip() == "LIMITS_DISAGREE_WITH_REGISTRY"
+    assert "findings:" not in out
+    assert "score:" not in out
+
+
+def test_matching_unpacked_size_exits_zero(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    registry = make_registry(tmp_path, BENIGN)
+    registry.new_dist["unpackedSize"] = _tree_bytes(BENIGN, "new")
+
+    code, _, err = _run(capsys, registry)
+
+    assert code == 0
+    assert err == ""
 
 
 def test_oversized_tarball_exits_two(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -880,3 +907,109 @@ def test_no_cache_flag_disables_the_download_cache(
     code2, _, _ = _run(capsys, registry, "--json", "--no-cache", config=config)
     assert code2 == 0
     assert len(registry.requests) == 6
+
+
+def _run_with_config_file(
+    capsys: pytest.CaptureFixture[str],
+    registry: FakeRegistry,
+    config_path: Path,
+    *extra: str,
+) -> tuple[int, str, str]:
+    """Drive ``compare --config`` with no injected Config, so the file must be loaded."""
+    args = [
+        "compare",
+        f"npm:{registry.name}@{OLD_VERSION}",
+        f"npm:{registry.name}@{NEW_VERSION}",
+        "--config",
+        str(config_path),
+        "--no-cache",
+        *extra,
+    ]
+    try:
+        code = cli.main(args, client=registry, config=None)
+    except SystemExit as exc:  # argparse rejects an unrecognised --config before the fix
+        pytest.fail(f"compare must accept --config (argparse exited with {exc.code})")
+    captured = capsys.readouterr()
+    return code, captured.out, captured.err
+
+
+def test_compare_loads_a_config_file(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    registry = make_registry(tmp_path, BENIGN)
+    config_path = tmp_path / "pkgwatch.toml"
+    config_path.write_text("[fetch]\nmax_tarball_bytes = 16\n", encoding="utf-8")
+
+    code, _, err = _run_with_config_file(capsys, registry, config_path)
+
+    assert code == 2
+    assert err.strip() == "SIZE_LIMIT_EXCEEDED"
+
+
+def test_compare_missing_config_reports_a_stable_code(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    registry = make_registry(tmp_path, BENIGN)
+    missing = tmp_path / "nope.toml"
+
+    code, out, err = _run_with_config_file(capsys, registry, missing, "--json")
+
+    assert code == 2
+    assert err.strip() == "CONFIG_NOT_FOUND"
+    assert json.loads(out)["error"] == "CONFIG_NOT_FOUND"
+
+
+def test_compare_invalid_config_reports_a_stable_code(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    registry = make_registry(tmp_path, BENIGN)
+    config_path = tmp_path / "pkgwatch.toml"
+    config_path.write_text("[sandbox]\nmax_file_count = -5\n", encoding="utf-8")
+
+    code, out, err = _run_with_config_file(capsys, registry, config_path, "--json")
+
+    assert code == 2
+    assert err.strip() == "CONFIG_INVALID"
+    assert json.loads(out)["error"] == "CONFIG_INVALID"
+
+
+def test_a_failed_output_write_leaves_no_temp_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    registry = make_registry(tmp_path, BENIGN)
+    out_dir = tmp_path / "reports"
+    out_path = out_dir / "result.json"
+
+    real_replace = os.replace
+
+    def _boom(src: object, dst: object, *args: object, **kwargs: object) -> None:
+        # Only the report's atomic-replace step fails; archive extraction still works.
+        if ".pkgwatch-out-" in os.fspath(src):
+            raise OSError("replace failed")
+        real_replace(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(os, "replace", _boom)
+
+    code, _, err = _run(capsys, registry, "--json", "--output", str(out_path))
+
+    assert code == 2
+    assert err.strip() == "OUTPUT_WRITE_FAILED"
+    assert list(out_dir.glob(".pkgwatch-out-*")) == []
+
+
+def test_sarif_compare_surfaces_changed_files_omitted(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    registry = make_registry(tmp_path, BENIGN)
+    many = {f"f{i:03d}.js": f"var x = {i};\n".encode() for i in range(60)}
+    registry.set_new(tarball_from_files(tmp_path, "many", many))
+
+    code, out, _ = _run(capsys, registry, "--sarif")
+    run = json.loads(out)["runs"][0]
+
+    assert code == 0
+    assert run["invocations"][0]["executionSuccessful"] is True
+    assert run["properties"]["changed_files_omitted"] > 0
+    invocations = run["invocations"]
+    note_ids = {
+        str(item["descriptor"]["id"]) for item in invocations[0]["toolExecutionNotifications"]
+    }
+    assert "CHANGED_FILES_OMITTED" in note_ids

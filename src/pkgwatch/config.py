@@ -183,7 +183,7 @@ class LockConfig(BaseModel):
 class Config(BaseModel):
     model_config = _STRICT
 
-    config_version: int = 1
+    config_version: int = Field(default=1, ge=1, le=1)
     paths: PathsConfig = Field(default_factory=PathsConfig)
     sandbox: SandboxLimits = Field(default_factory=SandboxLimits)
     ecosystems: EcosystemsConfig = Field(default_factory=EcosystemsConfig)

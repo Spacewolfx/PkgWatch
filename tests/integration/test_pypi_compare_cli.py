@@ -517,8 +517,10 @@ def test_markdown_report_includes_pypi_metadata(
     code, out, _ = _run(capsys, registry, "--markdown")
     assert code == 0
     assert "### PyPI Metadata" in out
-    assert "requires_dist" in out
-    assert "requests>=2.0" in out
+    # Markdown output html-escapes markup: the '>' in the value and the '_' in the
+    # field name arrive sanitized (renders identically in a GitHub comment).
+    assert "requires\\_dist" in out
+    assert "requests&gt;=2.0" in out
 
 
 def test_compare_reuses_the_download_cache_on_a_second_run(

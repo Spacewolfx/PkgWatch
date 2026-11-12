@@ -130,6 +130,7 @@ Scoped names are accepted and percent-encoded (`@scope/pkg` becomes `@scope%2Fpk
 | `--explain` | add neutral "Why it matters" / "Common benign causes" lines per fired rule (experimental rules are marked) |
 | `--ignore RULE_ID` | repeatable; removes that rule from findings, score and exit code, and prints `ignored: RULE_ID (n findings)`; an unknown ID exits 2 |
 | `--experimental` | also run rule families 3 (obfuscation) and 4 (metadata); off by default |
+| `--config PATH` | read the sandbox, scoring, fetch and obfuscation limits from this TOML file; a missing file exits 2 with `CONFIG_NOT_FOUND`, an unreadable one with `CONFIG_INVALID` |
 | `--no-cache` | disable the verified download cache for this run |
 
 ### Recorded output
@@ -304,6 +305,18 @@ stay `{"state": "present", "value": {}}`; nested objects such as `devDependencie
 On exit 2 in `--json` mode the object is `{"error": "<CODE>", "measured": false}`; an
 `analysis_incomplete` error also carries `"parse_problems": ["manifest" | "budget" | …]`.
 The stable code is also printed on stderr.
+
+### SARIF output
+
+`--sarif` emits SARIF v2.1.0 on both `compare` and `lock`: one run, the fired rules in
+`tool.driver.rules`, one result per finding, and the same `measured: false` disclaimer in
+`runs[].properties`. Anything that makes the analysis *smaller* than the input is stated
+twice — in `runs[].properties` and as a `toolExecutionNotifications[]` entry on
+`runs[].invocations[]` — so a code-scanning consumer cannot miss it: `CHANGED_FILES_OMITTED`
+and `ANALYSIS_WARNINGS` for compare; `ANALYSIS_INCOMPLETE`, `UNANALYSED_PACKAGES`,
+`PACKAGE_ERRORS`, `FINDINGS_OMITTED` and `PARSE_PROBLEMS` for lock. The invocation stays
+`executionSuccessful: true` — incompleteness is reported at `note`/`warning` level, not as
+a tool failure.
 
 ### Exit codes and stable error codes
 
@@ -496,7 +509,10 @@ publishing TODO: [docs/ci.md](docs/ci.md).
 
 ## Configuration
 
-`[fetch]` and `[obfuscation]` in `pkgwatch.toml` (all values are defaults):
+`pkgwatch.toml` has one accepted version, `config_version = 1`; anything else exits 2 with
+`CONFIG_INVALID`. `lock --config` reads `[lock]`; `compare --config` reads the fetch,
+sandbox, scoring and obfuscation limits. (`[fetch]` and `[obfuscation]`, all values are
+defaults):
 
 ```toml
 [fetch]

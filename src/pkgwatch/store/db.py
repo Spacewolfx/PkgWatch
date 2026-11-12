@@ -72,16 +72,18 @@ def migrate(
 ) -> int:
     """Apply every step above the database's current version. Returns the version reached."""
     steps = _declared_migrations() if migrations is None else tuple(migrations)
-    if sorted(step.version for step in steps) != [step.version for step in steps]:
+    versions = [step.version for step in steps]
+    if sorted(versions) != versions:
         raise ValueError("migrations must be ordered by version")
+    if len(set(versions)) != len(versions):
+        raise ValueError("migration versions must be unique")
 
     reached = current_version(connection)
-    if steps:
-        target = steps[-1].version
-        if reached > target:
-            raise SchemaTooNew(
-                f"database is at user_version {reached}; this build migrates to {target}"
-            )
+    target = steps[-1].version if steps else TARGET_VERSION
+    if reached > target:
+        raise SchemaTooNew(
+            f"database is at user_version {reached}; this build migrates to {target}"
+        )
 
     for step in steps:
         if step.version <= reached:

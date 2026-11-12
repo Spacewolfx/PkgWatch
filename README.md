@@ -12,7 +12,7 @@ pkgwatch compare pypi:<name>@<old> pypi:<name>@<new> [--json] [--experimental]
 [JSON schema](#json-schema) · [Lockfile parsing and planning](#lockfile-parsing-and-planning) ·
 [`pkgwatch lock`](#pkgwatch-lock) · [How to use in a PR](#how-to-use-in-a-pr) ·
 [Limitations](#limitations) · [Configuration](#configuration) · [Rules](#rules) ·
-[Case study](#case-study) · [PyPI support](#pypi-support)
+[Case study](#case-study) · [PyPI support](#pypi-support) · [Changelog](CHANGELOG.md)
 
 ## What it does
 
@@ -520,7 +520,7 @@ max_metadata_bytes = 8388608      # hard cap on the registry document
 max_tarball_bytes = 67108864      # hard cap on each tarball
 request_timeout_seconds = 15.0
 max_redirects = 5                 # same-host redirects only
-user_agent = "pkgwatch/0.1.0"
+user_agent = "pkgwatch/0.2.0"
 
 [obfuscation]
 min_blob_length = 200             # base64-like run, characters

@@ -15,7 +15,9 @@ from pkgwatch.models import (
     FileChange,
     FileRole,
     Finding,
+    ParseErrorKind,
     ScoreResult,
+    Severity,
 )
 
 FLOAT_PRECISION = 6
@@ -83,6 +85,15 @@ _SCORE_NAMES = (
     "score_info_count",
     "score_boost_count",
 )
+
+_CAPABILITY_RULES: dict[str, tuple[str, ...]] = {
+    "capability_shell_exec_count": ("JS_CHILD_PROCESS_ADDED", "PYPI_SHELL_EXEC_ADDED"),
+    "capability_dynamic_eval_count": ("DYNAMIC_EVAL_ADDED", "PYPI_EVAL_EXEC_ADDED"),
+    "capability_net_access_count": ("NET_ACCESS_ADDED", "PYPI_NET_ACCESS_ADDED"),
+    "capability_fs_write_count": ("FS_WRITE_OUTSIDE_PACKAGE_ADDED",),
+    "capability_env_read_count": ("ENV_ENUMERATION_ADDED", "PYPI_ENV_ENUM_ADDED"),
+}
+_DEP_RULES = ("DEPENDENCY_ADDED", "PYPI_DEPENDENCY_ADDED")
 
 FEATURE_NAMES: frozenset[str] = frozenset(
     _SIZE_NAMES
@@ -161,13 +172,101 @@ def _file_features(ctx: DiffContext) -> dict[str, FeatureValue]:
     return features
 
 
+def _dep_features(ctx: DiffContext, findings: Sequence[Finding]) -> dict[str, FeatureValue]:
+    added = sum(1 for item in findings if item.rule_id in _DEP_RULES)
+    if ctx.ecosystem.value == "npm":
+        raw = ctx.metadata_after.get("dependencies")
+        total = len(raw) if (available := isinstance(raw, dict)) else 0
+    else:
+        raw = ctx.metadata_after.get("requires_dist")
+        total = len(raw) if (available := isinstance(raw, list)) else 0
+    return {
+        "dep_added_count": added,
+        "dep_total_new": total,
+        "dep_added_ratio": round(added / total, FLOAT_PRECISION) if total else 0.0,
+        "dep_metadata_available": available,
+    }
+
+
+def _detail_number(item: Finding, key: str) -> float:
+    value = item.details.get(key)
+    return float(value) if isinstance(value, int | float) else 0.0
+
+
+def _obfus_features(findings: Sequence[Finding]) -> dict[str, FeatureValue]:
+    blobs = [item for item in findings if item.rule_id == "BASE64_BLOB_PRESENT"]
+    entropy = [
+        _detail_number(item, "entropy_bits")
+        for item in findings
+        if item.rule_id == "HIGH_ENTROPY_STRINGS"
+    ]
+    escapes = [
+        _detail_number(item, "escapes") for item in findings if item.rule_id == "HEX_ESCAPE_DENSITY"
+    ]
+    return {
+        "obfus_blob_count": len(blobs),
+        "obfus_blob_max_length": int(max((_detail_number(i, "length") for i in blobs), default=0)),
+        "obfus_entropy_max_bits": round(max(entropy, default=0.0), FLOAT_PRECISION),
+        "obfus_entropy_mean_bits": round(
+            sum(entropy) / len(entropy) if entropy else 0.0, FLOAT_PRECISION
+        ),
+        "obfus_escape_max_count": int(max(escapes, default=0)),
+        "obfus_likely_minified_count": sum(
+            1 for item in findings if item.details.get("likely_minified") is True
+        ),
+    }
+
+
+def _manifest_features(ctx: DiffContext, findings: Sequence[Finding]) -> dict[str, FeatureValue]:
+    ids = {item.rule_id for item in findings}
+    return {
+        "manifest_install_hook_added": bool(
+            ids & {"NPM_INSTALL_SCRIPT_ADDED", "PYPI_INSTALL_HOOK_ADDED"}
+        ),
+        "manifest_script_injection": "NPM_SCRIPT_INJECTION_FROM_METADATA" in ids,
+        "manifest_repository_changed": "REPOSITORY_URL_CHANGED" in ids,
+        "manifest_invalid": any(
+            error.kind is ParseErrorKind.MANIFEST for error in ctx.parse_errors
+        ),
+    }
+
+
+def _score_features(findings: Sequence[Finding], result: ScoreResult) -> dict[str, FeatureValue]:
+    features: dict[str, FeatureValue] = {
+        "score_value": result.score,
+        "score_finding_count": len(findings),
+        "score_boost_count": len(result.boosts),
+    }
+    for severity in Severity:
+        features[f"score_{severity.value}_count"] = sum(
+            1 for item in findings if item.severity is severity
+        )
+    return features
+
+
+def _capability_features(findings: Sequence[Finding]) -> dict[str, FeatureValue]:
+    features: dict[str, FeatureValue] = {}
+    total = 0
+    for name, rule_ids in _CAPABILITY_RULES.items():
+        count = sum(1 for item in findings if item.rule_id in rule_ids)
+        features[name] = count
+        total += count
+    features["capability_total_count"] = total
+    return features
+
+
 def build_features(
     ctx: DiffContext,
     findings: Sequence[Finding],
     result: ScoreResult,
 ) -> dict[str, FeatureValue]:
     """The closed feature catalog for one analysed pair."""
-    features: dict[str, FeatureValue] = {}
+    features: dict[str, FeatureValue] = {"ecosystem": ctx.ecosystem.value}
     features.update(_size_features(ctx.changes))
     features.update(_file_features(ctx))
+    features.update(_dep_features(ctx, findings))
+    features.update(_capability_features(findings))
+    features.update(_obfus_features(findings))
+    features.update(_manifest_features(ctx, findings))
+    features.update(_score_features(findings, result))
     return dict(sorted(features.items()))

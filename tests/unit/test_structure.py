@@ -21,6 +21,7 @@ PIPELINE_PACKAGES = (
     "score",
     "store",
     "dataset",
+    "labeling",
     "lockfile",
     "lock",
 )

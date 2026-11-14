@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from pkgwatch.models import (
     FEATURE_VOCABULARY,
+    SCHEMA_VERSION,
     DatasetFinding,
     DatasetRecord,
     FileRole,
@@ -20,6 +21,7 @@ from pkgwatch.models import (
     ScoreResult,
     Severity,
 )
+from tests.support.records import make_analysis_record
 
 
 def make_finding(**overrides: Any) -> Finding:
@@ -226,3 +228,21 @@ def test_the_vocabulary_covers_exactly_the_emitted_categoricals() -> None:
     assert set(FEATURE_VOCABULARY) == {"ecosystem", "file_dominant_role"}
     assert FEATURE_VOCABULARY["ecosystem"] == frozenset({"npm", "pypi"})
     assert FEATURE_VOCABULARY["file_dominant_role"] == frozenset(item.value for item in FileRole)
+
+
+def test_analysis_record_carries_no_label_decision() -> None:
+    record = make_analysis_record()
+    fields = set(type(record).model_fields)
+    assert not fields & {"label", "label_source", "label_confidence", "split", "metric_eligible"}
+    assert record.schema_version == SCHEMA_VERSION
+    assert record.experimental is False
+
+
+def test_analysis_record_rejects_an_unknown_field() -> None:
+    with pytest.raises(ValidationError):
+        make_analysis_record(label="benign")
+
+
+def test_analysis_record_shares_the_feature_boundary() -> None:
+    with pytest.raises(ValidationError, match="closed vocabulary"):
+        make_analysis_record(features={"file_dominant_role": "payload"})

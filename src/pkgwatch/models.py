@@ -545,6 +545,44 @@ class DatasetRecord(BaseModel):
         return self
 
 
+class AnalysisRecord(BaseModel):
+    """One analysed pair, before any label decision (M3, spec §3.1).
+    A pure function of the two artifacts, the rule set and the config: no timestamp, so
+    re-recording the same pair under the same inputs is byte-identical.
+    """
+
+    model_config = _STRICT
+
+    ecosystem: Ecosystem
+    package_name: str = Field(min_length=1, max_length=214)
+    old_version: str = Field(min_length=1, max_length=128)
+    new_version: str = Field(min_length=1, max_length=128)
+    published_at: AwareDatetime
+    features: dict[str, FeatureValue]
+    findings: tuple[DatasetFinding, ...]
+    rule_score: int = Field(ge=0, le=100)
+    schema_version: int = SCHEMA_VERSION
+    rule_set_version: str
+    weights_version: str
+    artifact_sha256_old: str
+    artifact_sha256_new: str
+    analysis_incomplete: bool = False
+    config_sha256: str
+    experimental: bool = False
+
+    @field_validator("features")
+    @classmethod
+    def _bounded_features(cls, value: dict[str, FeatureValue]) -> dict[str, FeatureValue]:
+        return validate_features(value)
+
+    @field_validator("artifact_sha256_old", "artifact_sha256_new", "config_sha256")
+    @classmethod
+    def _sha256_fields(cls, value: str) -> str:
+        if not _SHA256_RE.fullmatch(value):
+            raise ValueError("must be 64 lowercase hex characters")
+        return value
+
+
 DIFF_LINE_MAX_CHARS = 1024
 STAGE_ERROR_MAX_CHARS = 500
 

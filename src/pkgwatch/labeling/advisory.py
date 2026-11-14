@@ -143,28 +143,44 @@ def _events_cover(events: Any, ecosystem: Ecosystem, version: ParsedVersion) -> 
 
     ``fixed`` is exclusive (the fix landed in that version), ``last_affected`` inclusive;
     an unclosed interval extends to infinity. Unparseable versions are skipped, never
-    coerced.
+    coerced, with two pinned semantics (SPEC §5.2): the literal ``"0"`` on ``introduced``
+    is the OSV origin sentinel (negative infinity), tracked as ``from_origin`` instead of
+    a parsed lower bound; an unparseable closing bound closes its interval without
+    claiming coverage (fail closed), so a later ``introduced`` can still open a new one.
     """
     if not isinstance(events, list):
         return False
     introduced: ParsedVersion | None = None
+    from_origin = False
     for event in events:
         if not isinstance(event, Mapping):
             continue
         if "introduced" in event:
-            introduced = _parse_or_none(ecosystem, event["introduced"])
+            if event["introduced"] == "0":
+                introduced = None
+                from_origin = True
+            else:
+                introduced = _parse_or_none(ecosystem, event["introduced"])
+                from_origin = False
         elif "fixed" in event or "last_affected" in event:
-            if introduced is None:
+            if introduced is None and not from_origin:
                 continue
             closing = "fixed" if "fixed" in event else "last_affected"
             bound = _parse_or_none(ecosystem, event[closing])
             if bound is None:
+                introduced = None
+                from_origin = False
                 continue
             upper = compare(version, bound)
             inside = upper < 0 if closing == "fixed" else upper <= 0
-            if inside and compare(introduced, version) <= 0:
+            if inside and (
+                from_origin or (introduced is not None and compare(introduced, version) <= 0)
+            ):
                 return True
             introduced = None
+            from_origin = False
+    if from_origin:
+        return True
     return introduced is not None and compare(introduced, version) <= 0
 
 

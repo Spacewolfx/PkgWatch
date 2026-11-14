@@ -45,6 +45,29 @@ def test_a_version_inside_an_introduced_interval_is_malicious(tmp_path: Path) ->
     assert load_advisories(directory, [IDENTITY])[0].label is Label.MALICIOUS
 
 
+def test_the_osv_origin_sentinel_opens_an_interval(tmp_path: Path) -> None:
+    # SPEC §5.2: `introduced: "0"` is negative infinity, not an unparseable version.
+    # It is the dominant shape in OpenSSF malicious-packages; npm parse("0") raises.
+    directory = _write(tmp_path, _osv(events=[{"introduced": "0"}, {"fixed": "1.2.0"}]))
+    assert load_advisories(directory, [IDENTITY])[0].label is Label.MALICIOUS
+
+
+def test_the_osv_origin_sentinel_with_no_upper_bound_is_malicious(tmp_path: Path) -> None:
+    directory = _write(tmp_path, _osv(events=[{"introduced": "0"}]))
+    assert load_advisories(directory, [IDENTITY])[0].label is Label.MALICIOUS
+
+
+def test_an_unparseable_fixed_bound_does_not_claim_coverage(tmp_path: Path) -> None:
+    # SPEC §5.2: fail closed. An interval whose upper end is unknown proves nothing.
+    directory = _write(tmp_path, _osv(events=[{"introduced": "1.0.0"}, {"fixed": "not-a-version"}]))
+    assert load_advisories(directory, [IDENTITY])[0].label is Label.UNKNOWN
+
+
+def test_a_fixed_bound_equal_to_the_record_version_is_not_covered(tmp_path: Path) -> None:
+    directory = _write(tmp_path, _osv(events=[{"introduced": "1.0.0"}, {"fixed": "1.1.0"}]))
+    assert load_advisories(directory, [IDENTITY])[0].label is Label.UNKNOWN
+
+
 def test_a_version_outside_every_interval_is_an_explicit_unknown(tmp_path: Path) -> None:
     directory = _write(tmp_path, _osv(versions=["0.9.0"]))
     claims = load_advisories(directory, [IDENTITY])

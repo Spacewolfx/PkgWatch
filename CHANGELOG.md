@@ -125,10 +125,12 @@ unmeasured; findings are signals for human review.
 
 ### Changed
 
-- Rule version bumped to `2` for the rules whose matching changed above
-  (`NPM_INSTALL_SCRIPT_ADDED`, `PYPI_INSTALL_HOOK_ADDED`, `PYPI_SHELL_EXEC_ADDED`,
-  `PYPI_NET_ACCESS_ADDED`, `PYPI_ENV_ENUM_ADDED` and the capability-grouped npm family-2
-  rules), so recorded findings can be told apart.
+- `rule_version` bumped to `2` for the six rules whose matching changed above
+  (`NPM_INSTALL_SCRIPT_ADDED`, `JS_CHILD_PROCESS_ADDED`, `NET_ACCESS_ADDED`,
+  `PYPI_INSTALL_HOOK_ADDED`, `PYPI_SHELL_EXEC_ADDED`, `PYPI_ENV_ENUM_ADDED`), so recorded
+  findings can be told apart. Every other rule stays at `1`.
+  [docs/rules.md](docs/rules.md) now lists the version of every rule, and a test checks
+  that table against the registry.
 - `compare` warns when a same-package diff produced no changed file, which used to be a
   silent no-op.
 - Documentation: README gained a SARIF section, a `--config` row for `compare`, a case

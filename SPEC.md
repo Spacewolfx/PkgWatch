@@ -1,6 +1,7 @@
 # pkgwatch — SPEC
 
-Version 0.1 · schema_version 1 · weights_version `w1` · rule_set_version (unassigned until M2)
+Version 0.2.0 · compare schema_version 2 · lock schema_version 4 · store schema_version 1 ·
+weights_version `w1` · rule_set_version computed from the registry (§5)
 
 Normative for milestones M1–M5. Where this document says *verified*, it means probed from
 this machine on 2026-11-05; where it says *TODO*, the behavior is specified but the
@@ -93,7 +94,7 @@ TODO (M4+): confirm a supported change-stream before writing a firehose reader.
 - crates: `versions[].{crate, num, created, downloads, yanked}`, `dependencies[].{crate_id,
   req, kind, optional}`; tarball from the download route.
 
-**TODO(v0.2) — operator decision, initial untuned values, not measured (2026-11-07):**
+**TODO (still open) — operator decision, initial untuned values, not measured (2026-11-07):**
 `versions[v].gpt` looks like a typo. No replacement is guessed; that token is ignored and
 must not appear in a rule, a metadata section, or a field name until it is confirmed against
 a live document. TODO: verify the real field. Likewise `maintainers[{name,email}]`,
@@ -115,7 +116,7 @@ RuleFn = Callable[[DiffContext], list[Finding]]   # no I/O, no clock, no env, no
 
 @registry.register(
     rule_id="NPM_INSTALL_SCRIPT_ADDED",
-    rule_version=1,
+    rule_version=2,
     severity="high",
     ecosystems=("npm",),
     families=(RuleFamily.LIFECYCLE_SCRIPTS,),
@@ -136,6 +137,10 @@ list. Registration order fixes emission order.
 3. `rule_id` stable across versions — a rename is a new rule, the old one is retired in
    place with its final `rule_version`;
 4. `rule_version` bumped on **any** change to detection semantics (not to formatting).
+
+The current `rule_version` and severity of every registered rule are listed in
+[docs/rules.md](docs/rules.md); a test checks that table against the registry, so this
+document does not restate the numbers.
 
 ### 4.2 `DiffContext` — what a rule may see
 
@@ -199,14 +204,15 @@ Family 2's "absent before" is evaluated against the *whole old tree*, not the ch
 a capability that already existed elsewhere in the package is not new. Family 3 thresholds
 (entropy, blob length, escape density) are config, and the rule text names them.
 
-### 4.5.1 v0.2 npm rules — operator decision, initial untuned values, not measured
+### 4.5.1 npm families 3–4 — operator decision, initial untuned values, not measured
 
 **Operator decision, initial untuned values, not measured (2026-11-07).** The IDs in the
-§4.5 table are normative for these five rules. `rule_version = 1` for all of them. They are
-npm-only, pure `DiffContext -> list[Finding]` functions, and follow §4.1/§4.4 unchanged.
-Both families are **experimental**: they are disabled by default and run only with
-`--experimental` (v0.3); experimental findings are marked `(experimental)` in `--explain`
-output. Their severities and thresholds stay untuned operator decisions, not measured.
+§4.5 table are normative for these five rules; their current versions are in
+[docs/rules.md](docs/rules.md). They are npm-only, pure `DiffContext -> list[Finding]`
+functions, and follow §4.1/§4.4 unchanged. Both families are **experimental**: they are
+disabled by default and run only with `--experimental`; experimental findings are marked
+`(experimental)` in `--explain` output. Their severities and thresholds stay untuned
+operator decisions, not measured.
 
 | `rule_id` | family | severity | base (§5) | reads |
 |---|---|---|---|---|
@@ -224,7 +230,7 @@ that would be an evasion path. Evidence never prints a whole blob. Thresholds ar
 
 **DEFERRED (TODO):** `MAINTAINER_ADDED`. Package-level `maintainers` is a snapshot of the
 current state, not a per-version value, so it cannot be diffed between two versions. It is
-not registered and has no fixture. Family 4 in v0.2 ships `DEPENDENCY_ADDED` and
+not registered and has no fixture. Family 4 for npm ships `DEPENDENCY_ADDED` and
 `REPOSITORY_URL_CHANGED` only. TODO: `devDependencies`, `engines`, `os`, `cpu`, `bin`,
 `_npmUser`, `deprecated` and doc-level `repository.url` are not yet rules; none may be
 invented as a rule without an operator decision.
@@ -239,10 +245,10 @@ defensive parser is used by the "package.json changes" section and by
 ### 4.5.2 PyPI rules — operator decision, initial untuned values, not measured
 
 **Operator decision, initial untuned values, not measured (2026-11-09).** Six
-PyPI-specific rules, disjoint from the npm rules by ecosystem. `rule_version = 1` for
-all of them. They are pure `DiffContext -> list[Finding]` functions, follow §4.1/§4.4,
-and share the `w1` score table with npm (§5). Capability matching reuses the same
-added-lines contract as §4.5 family 2, over `.py` files plus the build manifests
+PyPI-specific rules, disjoint from the npm rules by ecosystem; their current versions are
+in [docs/rules.md](docs/rules.md). They are pure `DiffContext -> list[Finding]` functions,
+follow §4.1/§4.4, and share the `w1` score table with npm (§5). Capability matching reuses
+the same added-lines contract as §4.5 family 2, over `.py` files plus the build manifests
 `setup.py`, `pyproject.toml`, `setup.cfg` at depth <= 2.
 `PYPI_DEPENDENCY_ADDED` reads the shipped `PKG-INFO`/`METADATA` document (never the
 registry document) and is experimental-gated by the runner, exactly like npm's
@@ -305,12 +311,13 @@ re-deriving it — so a human can see exactly why. `rule_set_version` = `sha256`
 `rule_id@rule_version` list, first 12 hex chars — it changes the moment any rule semantics
 change, which is the point.
 
-**Operator decision, initial untuned values, not measured (2026-11-07):** v0.2 introduces
-**no new weights**. The five new rules use the existing `w1` severity bases from the table
-above: `low` → 4 for `BASE64_BLOB_PRESENT`, `HIGH_ENTROPY_STRINGS`, `HEX_ESCAPE_DENSITY`
-and `DEPENDENCY_ADDED`; `medium` → 10 for `REPOSITORY_URL_CHANGED`. No existing base,
-decay, cap, boost or threshold changes; `weights_version` stays `w1`. The §5 Step-2 boost
-"A family-1 rule and ≥3 family-3 rules fire" needs exactly the three family-3 IDs above.
+**Operator decision, initial untuned values, not measured (2026-11-07):** families 3–4
+introduce **no new weights**. The five rules use the existing `w1` severity bases from the
+table above: `low` → 4 for `BASE64_BLOB_PRESENT`, `HIGH_ENTROPY_STRINGS`,
+`HEX_ESCAPE_DENSITY` and `DEPENDENCY_ADDED`; `medium` → 10 for `REPOSITORY_URL_CHANGED`.
+No existing base, decay, cap, boost or threshold changes; `weights_version` stays `w1`.
+The §5 Step-2 boost "A family-1 rule and ≥3 family-3 rules fire" needs exactly the three
+family-3 IDs above.
 
 ## 6. Record schema
 
@@ -510,7 +517,7 @@ capture and `run_id`.
 `fetch --release eco/name/version` · `check <eco> <name> <v_old> <v_new> [--offline-dir]`
 (the offline pair-analysis used by integration tests) · `score --release …` ·
 `export-dataset [--split]` · `validate-dataset` · `train|eval|explain` (M5, own entry) ·
-`compare npm:<name>@<old> npm:<name>@<new>` (v0.2) · `compare pypi:<name>@<old> pypi:<name>@<new>`
+`compare npm:<name>@<old> npm:<name>@<new>` · `compare pypi:<name>@<old> pypi:<name>@<new>`
 (§9.2, PyPI JSON API) · `lock --old OLD_LOCK --new NEW_LOCK`
 (§9.1, implemented in `lock/` + `lockfile/`).
 
@@ -695,7 +702,7 @@ order; unbalanced or unparseable sets stay unpaired (`MULTIPLE_VERSIONS`).
 | A5 | npm `/-/rss?<name>` scoping | Response does not prove scoping | Unused; watchlist polling instead |
 | A6 | Severity→base-weight numbers in §5 | Design judgement, not empirically tuned | `w1`; weights live in `config.py`, versioned, and `eval/` is where they get challenged |
 | A7 | `max_*` default limits in §6.5 | Chosen for typical packages | Revisit with real registry corpus stats in M4; all are config, none are literals |
-| A8 | `versions[v].gpt` in §3 | Looks like a typo | TODO(v0.2): ignored; confirm the real field against a live document before naming it |
-| A9 | `maintainers` as a per-version diff | Not supportable | TODO(v0.2): `MAINTAINER_ADDED` deferred; package-level maintainers is a current-state snapshot |
-| A10 | `[obfuscation]` defaults in §6.5.1 and v0.2 severities in §4.5.1 | Operator decision, initial untuned values, not measured | TODO: challenge in `eval/`; never present them as measured detection quality |
-| A11 | Doc-level `repository.url`, `_npmUser`, `deprecated`, `devDependencies` as family-4 rules | Not implemented | TODO(v0.2): no rule may be invented for them without an operator decision |
+| A8 | `versions[v].gpt` in §3 | Looks like a typo | TODO (open): ignored; confirm the real field against a live document before naming it |
+| A9 | `maintainers` as a per-version diff | Not supportable | TODO (open): `MAINTAINER_ADDED` deferred; package-level maintainers is a current-state snapshot |
+| A10 | `[obfuscation]` defaults in §6.5.1 and the family-3/4 severities in §4.5.1 | Operator decision, initial untuned values, not measured | TODO: challenge in `eval/`; never present them as measured detection quality |
+| A11 | Doc-level `repository.url`, `_npmUser`, `deprecated`, `devDependencies` as family-4 rules | Not implemented | TODO (open): no rule may be invented for them without an operator decision |

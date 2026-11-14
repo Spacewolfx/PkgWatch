@@ -35,7 +35,7 @@ pkgwatch compare pypi:<name>@<old> pypi:<name>@<new> [--json] [--experimental]
 - Reports, in text or JSON: both versions, file counts, every finding (grouped by
   severity), the score and boosts, changed files, `package.json` changes, registry
   metadata changes, ignored rules, and optional neutral `--explain` copy.
-- v0.2 adds rule families 3 (obfuscation signals) and 4 (metadata changes) for npm. Their
+- Rule families 3 (obfuscation signals) and 4 (metadata changes) are npm-only. Their
   severities and thresholds are **operator decisions, initial untuned values, not
   measured** (SPEC §4.5.1 / §6.5.1), and both families are **experimental** (disabled
   by default; enable with `--experimental`).
@@ -91,7 +91,7 @@ uv run pkgwatch config-check --path pkgwatch.toml
 ```
 
 The code itself also installs as a wheel (`pip install .` — hatchling, single runtime
-dependency `pydantic`); version 0.1.0. Licensed under MIT (see `LICENSE`). Publishing to
+dependency `pydantic`); version 0.2.0. Licensed under MIT (see `LICENSE`). Publishing to
 a package index is not set up yet: install from the repository checkout until that
 decided path exists.
 
@@ -545,14 +545,17 @@ request_delay_seconds = 0.1       # polite delay before each request
 `likely_minified` is a reporting flag, not a suppression: a matching ADDED line of length
 ≥ 500 sets `details["likely_minified"] = True`. No file name (`*.min.js`, `dist/`, …)
 suppresses a finding. Sandbox limits and score weights live in their existing sections;
-v0.2 changes neither rule logic for families 1–2 nor any score weight.
+no score weight changed in 0.2.0 (`weights_version` stays `w1`). Detection in families 1–2
+did change, and the affected rules carry `rule_version` 2 — see [CHANGELOG.md](CHANGELOG.md).
 
 ## Rules
 
 `pkgwatch rules [--json | --markdown] [--family FAMILY] [--rule RULE_ID] [--ecosystem npm|pypi]`
 prints the catalog; every entry lists its families and ecosystems.
+[docs/rules.md](docs/rules.md) is the written catalog for both ecosystems, including each
+rule's current `rule_version`.
 
-Families 1–2 are unchanged from M2. v0.2 adds, for npm only:
+Families 3 and 4 are npm-only:
 
 | Rule ID | Family | Severity | Weight | Reads |
 |---|---|---|---|---|
@@ -643,12 +646,12 @@ Not implemented yet: the `lock` command for PyPI, and wheel-binary analysis.
 - `maintainers`, `repository.url`, `_npmUser` and `deprecated` are package-document-level
   snapshots, not version fields; they are not diffed.
 - `devDependencies`, `engines`, `os`, `cpu` and `bin` are not family-4 rules yet.
-- The v0.2 severities and `[obfuscation]` thresholds are initial untuned values, not
+- The family-3/4 severities and `[obfuscation]` thresholds are initial untuned values, not
   measured; `eval/` is where they get challenged.
 - SPEC §6.4's version parser compares semver and PEP 440 versions; it is implemented
   and also drives version-ordered pairing for multi-version lockfile names.
-- ARCHITECTURE §2's content-addressed caches are not implemented; v0.2 uses temp files and
-  writes nothing to `data/` or the SQL store.
+- ARCHITECTURE §2's content-addressed caches are not implemented; pkgwatch uses temp files
+  and writes nothing to `data/` or the SQL store.
 
 ## Development
 

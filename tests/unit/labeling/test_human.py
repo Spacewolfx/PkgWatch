@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 from pathlib import Path
 
 import pytest
@@ -56,3 +57,24 @@ def test_a_duplicate_identity_is_rejected(tmp_path: Path) -> None:
 
 def test_a_missing_directory_means_no_claims(tmp_path: Path) -> None:
     assert load_human_labels(tmp_path / "absent") == ()
+
+
+def test_a_non_utf8_note_byte_rejects_the_whole_file(tmp_path: Path) -> None:
+    # A latin-1 byte in a note cell must map to the stable code, not UnicodeDecodeError.
+    directory = tmp_path / "human"
+    directory.mkdir()
+    row = "npm,demo-pkg,1.0.0,1.1.0,benign,halley,2026-11-14,1.0,caf\xe9"
+    (directory / "a.csv").write_bytes((HEADER + "\n" + row + "\n").encode("latin-1"))
+    with pytest.raises(LabelError) as excinfo:
+        load_human_labels(directory)
+    assert excinfo.value.code == "LABEL_CSV_INVALID"
+
+
+def test_an_oversized_csv_field_rejects_the_whole_file(tmp_path: Path) -> None:
+    # A single field beyond csv.field_size_limit must map to the stable code, not csv.Error.
+    row = "npm,demo-pkg,1.0.0,1.1.0,benign,halley,2026-11-14,1.0," + "x" * (
+        csv.field_size_limit() + 1
+    )
+    with pytest.raises(LabelError) as excinfo:
+        load_human_labels(_write(tmp_path, row))
+    assert excinfo.value.code == "LABEL_CSV_INVALID"

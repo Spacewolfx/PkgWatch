@@ -130,12 +130,17 @@ def parse(ecosystem: Ecosystem, text: str) -> ParsedVersion:
 
     npm keeps its text verbatim as the canonical form; PEP 440 canonicalises
     (``1.0-ALPHA1`` → ``1.0a1``, zeros stripped, ``v`` prefix dropped). Raises
-    :class:`UnsupportedVersion` on anything the ecosystem's grammar does not accept.
+    :class:`UnsupportedVersion` on anything the ecosystem's grammar does not accept,
+    including digit runs beyond Python's ``int()`` limit (4300 digits), so untrusted
+    text never escapes as a raw ``ValueError``.
     """
-    if ecosystem is Ecosystem.NPM:
-        return _parse_npm(text)
-    if ecosystem is Ecosystem.PYPI:
-        return _parse_pypi(text)
+    try:
+        if ecosystem is Ecosystem.NPM:
+            return _parse_npm(text)
+        if ecosystem is Ecosystem.PYPI:
+            return _parse_pypi(text)
+    except ValueError:
+        raise UnsupportedVersion("version digit run exceeds the integer parse limit") from None
     raise UnsupportedVersion(f"unsupported ecosystem: {ecosystem.value}")
 
 

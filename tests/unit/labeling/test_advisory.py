@@ -9,7 +9,7 @@ import pytest
 
 from pkgwatch.labeling.advisory import load_advisories, normalize_pypi_name
 from pkgwatch.labeling.errors import LabelError
-from pkgwatch.models import Label
+from pkgwatch.models import Ecosystem, Label
 
 IDENTITY = ("npm", "demo-pkg", "1.0.0", "1.1.0")
 
@@ -105,3 +105,68 @@ def test_malformed_json_rejects_the_file(tmp_path: Path) -> None:
 
 def test_a_missing_directory_means_no_claims(tmp_path: Path) -> None:
     assert load_advisories(tmp_path / "absent", [IDENTITY]) == ()
+
+
+def test_last_affected_is_inclusive(tmp_path: Path) -> None:
+    directory = _write(tmp_path, _osv(events=[{"introduced": "1.0.0"}, {"last_affected": "1.1.0"}]))
+    assert load_advisories(directory, [IDENTITY])[0].label is Label.MALICIOUS
+
+
+def test_a_second_introduced_fixed_pair_in_one_events_list_still_matches(tmp_path: Path) -> None:
+    directory = _write(
+        tmp_path,
+        _osv(
+            events=[
+                {"introduced": "0.1.0"},
+                {"fixed": "0.5.0"},
+                {"introduced": "1.0.0"},
+                {"fixed": "1.2.0"},
+            ]
+        ),
+    )
+    assert load_advisories(directory, [IDENTITY])[0].label is Label.MALICIOUS
+
+
+def test_a_fail_closed_reset_does_not_lose_a_later_interval(tmp_path: Path) -> None:
+    directory = _write(
+        tmp_path,
+        _osv(
+            events=[
+                {"introduced": "1.0.0"},
+                {"fixed": "not-a-version"},
+                {"introduced": "1.0.0"},
+                {"fixed": "1.2.0"},
+            ]
+        ),
+    )
+    assert load_advisories(directory, [IDENTITY])[0].label is Label.MALICIOUS
+
+
+def test_pypi_end_to_end_normalises_the_advisory_name(tmp_path: Path) -> None:
+    document = {
+        "id": "MAL-2026-2",
+        "affected": [{"package": {"ecosystem": "PyPI", "name": "Demo_Pkg"}, "versions": ["1.1.0"]}],
+    }
+    directory = _write(tmp_path, document, name="MAL-2026-2.json")
+    claims = load_advisories(directory, [("pypi", "demo-pkg", "1.0.0", "1.1.0")])
+    assert len(claims) == 1
+    assert claims[0].label is Label.MALICIOUS
+    assert claims[0].ecosystem is Ecosystem.PYPI
+
+
+def test_an_over_long_version_string_is_skipped_not_a_crash(tmp_path: Path) -> None:
+    # Beyond Python's 4300-digit int limit: the version is skipped, never coerced,
+    # and the claim is an explicit UNKNOWN — no raw ValueError may escape.
+    directory = _write(tmp_path, _osv(versions=["9" * 5000 + ".0.0"]))
+    claims = load_advisories(directory, [IDENTITY])
+    assert len(claims) == 1
+    assert claims[0].label is Label.UNKNOWN
+
+
+def test_a_deeply_nested_json_document_rejects_the_file(tmp_path: Path) -> None:
+    directory = tmp_path / "advisories"
+    directory.mkdir()
+    (directory / "deep.json").write_text("[" * 10000 + "]" * 10000, encoding="utf-8")
+    with pytest.raises(LabelError) as excinfo:
+        load_advisories(directory, [IDENTITY])
+    assert excinfo.value.code == "ADVISORY_JSON_INVALID"

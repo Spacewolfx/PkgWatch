@@ -55,11 +55,14 @@ def load_advisories(
     """
     if not directory.is_dir():
         return ()
-    documents = [(path, _read(path)) for path in sorted(directory.glob("*.json"))]
+    documents: list[tuple[Path, dict[str, Any], str]] = []
+    for path in sorted(directory.glob("*.json")):
+        document, digest = _read(path)
+        documents.append((path, document, digest))
     claims: list[AdvisoryLabel] = []
     for ecosystem, package_name, old_version, new_version in identities:
         matched: list[AdvisoryLabel] = []
-        for path, document in documents:
+        for path, document, digest in documents:
             entries = [
                 entry
                 for entry in document["affected"]
@@ -68,7 +71,6 @@ def load_advisories(
             if not entries:
                 continue
             covered = any(_covers(entry, ecosystem, package_name, new_version) for entry in entries)
-            digest = hashlib.sha256(path.read_bytes()).hexdigest()[:12]
             matched.append(
                 AdvisoryLabel(
                     ecosystem=Ecosystem(ecosystem),
@@ -86,10 +88,12 @@ def load_advisories(
     return tuple(claims)
 
 
-def _read(path: Path) -> dict[str, Any]:
+def _read(path: Path) -> tuple[dict[str, Any], str]:
+    """Parse one OSV file and digest the very same bytes: one read, no parse-vs-hash gap."""
     try:
-        document = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        raw = path.read_bytes()
+        document = json.loads(raw.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, RecursionError):
         raise LabelError("ADVISORY_JSON_INVALID") from None
     if (
         not isinstance(document, dict)
@@ -98,7 +102,7 @@ def _read(path: Path) -> dict[str, Any]:
         or not isinstance(document.get("affected"), list)
     ):
         raise LabelError("ADVISORY_JSON_INVALID")
-    return document
+    return document, hashlib.sha256(raw).hexdigest()[:12]
 
 
 def _name_matches(entry: Mapping[str, Any], ecosystem: str, package_name: str) -> bool:

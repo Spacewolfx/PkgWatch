@@ -89,3 +89,16 @@ def test_parse_returns_frozen_dataclass() -> None:
     assert isinstance(parsed, ParsedVersion)
     with pytest.raises(AttributeError):
         parsed.text = "2.0.0"  # type: ignore[misc]
+
+
+@pytest.mark.parametrize("ecosystem", [Ecosystem.NPM, Ecosystem.PYPI])
+def test_an_over_long_digit_run_raises_unsupported_version(ecosystem: Ecosystem) -> None:
+    # Python 3.12 caps int-from-string at 4300 digits; the resulting ValueError must
+    # surface as UnsupportedVersion so untrusted text never escapes as a raw exception.
+    with pytest.raises(UnsupportedVersion):
+        parse(ecosystem, "9" * 5000 + ".0.0")
+
+
+def test_an_over_long_npm_prerelease_identifier_raises_unsupported_version() -> None:
+    with pytest.raises(UnsupportedVersion):
+        parse(Ecosystem.NPM, "1.0.0-" + "9" * 5000)

@@ -67,12 +67,15 @@ def load_human_labels(directory: Path) -> tuple[HumanLabel, ...]:
 def _rows(path: Path) -> list[dict[str, str]]:
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         raise LabelError("LABEL_CSV_INVALID") from None
     reader = csv.DictReader(text.splitlines())
     if tuple(reader.fieldnames or ()) != HUMAN_COLUMNS:
         raise LabelError("LABEL_CSV_INVALID", row=1)
-    rows = list(reader)
+    try:
+        rows = list(reader)
+    except csv.Error:
+        raise LabelError("LABEL_CSV_INVALID") from None
     for number, row in enumerate(rows, start=2):
         if None in row or any(value is None for value in row.values()):
             raise LabelError("LABEL_CSV_INVALID", row=number)

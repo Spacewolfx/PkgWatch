@@ -59,8 +59,9 @@ checkout (`python -m pip install "$GITHUB_ACTION_PATH"`).
 
 ## Limitations
 
-Same as the tool overall: static analysis only, npm only, exact versions only,
+Same as the tool overall: static analysis only, exact versions only,
 `package-lock.json` v2/v3 only, brand-new packages analysed without a baseline (their
 findings are noisier), lifecycle evidence is only the manifest line, obfuscated or
 runtime behaviour is missed, and the false-positive rate is unknown. Detection quality
-has not been measured.
+has not been measured. This page covers `lock`, which is npm-only; `compare` also
+supports PyPI ([pypi.md](pypi.md)).

@@ -43,13 +43,13 @@ Two commitments shape the whole design:
 | `src/pkgwatch/rules/` | Rule families | Pure functions `DiffContext -> list[Finding]`; 18 rules, npm 12 + PyPI 6 | built |
 | `src/pkgwatch/lockfile/` | Lockfile reader | Untrusted `package-lock.json` v2/v3 parse + plan (no network) | built |
 | `src/pkgwatch/lock/` | Lock runner | Per-pair analysis, report shaping, baseline | built |
-| `src/pkgwatch/features/` | Featurizer | Numeric/categorical features; **no raw source text** | **empty package** — M3, not built |
+| `src/pkgwatch/features/` | Featurizer | Closed 69-key numeric/categorical catalog; **no raw source text** | built (M3) |
 | `src/pkgwatch/score/` | Scorer | Deterministic score from findings + weights | built |
 | `src/pkgwatch/store/` | Repository | The only module that touches SQL | built for `releases`/`watchlist`/`runs`; unused by `compare` and `lock` |
-| `src/pkgwatch/dataset/` | Exporter | JSONL export, split assignment, schema validation | **empty package** — M3, not built |
-| `src/pkgwatch/labeling/` | Label sources | Human files + OSV advisory DB, label policy | **empty package** — M3, not built |
+| `src/pkgwatch/dataset/` | Exporter | Record seam, label join, salted split, JSONL + manifest, invariant validator | built (M3) |
+| `src/pkgwatch/labeling/` | Label sources | Human CSV + local OSV advisory JSON, precedence and conflicts | built (M3) |
 | `src/pkgwatch/model/` | Offline layer | Train / eval / explain; never imported by ingestion | **empty package** — M5, not built |
-| `src/pkgwatch/cli.py` | Entry point | argparse wrapper: `compare`, `lock`, `rules`, `config-*`, `version`; text/JSON/Markdown/SARIF output | built |
+| `src/pkgwatch/cli.py` | Entry point | argparse wrapper: `compare`, `lock`, `rules`, `export-dataset`, `validate-dataset`, `config-*`, `version`; text/JSON/Markdown/SARIF output | built |
 
 Dependency direction is strictly left-to-right through this list. `models.py` and
 `config.py` depend on nothing but stdlib and pydantic; every other module may depend on
@@ -75,7 +75,10 @@ them, never the reverse. `lock/` reuses `fetch/`, `sandbox/`, `diff/`, `rules/` 
  rules/runner.py (ecosystem select × family gating) ──▶ list[Finding]
         ▼
  score/engine.py ──▶ ScoreResult ──▶ report ──▶ text / JSON / Markdown / SARIF
-                                        └────▶ exit code 0 | 1 (--fail-on) | 2 (error)
+                                        ├────▶ exit code 0 | 1 (--fail-on) | 2 (error)
+                                        └── --record-dir ──▶ records/<sha256>.json
+                                             (AnalysisRecord: unfiltered findings, re-score,
+                                              69 features, both artifact digests)
 
  lock --old OLD_LOCK --new NEW_LOCK        (npm package-lock.json, lockfileVersion 2 or 3)
         ▼
@@ -86,7 +89,8 @@ them, never the reverse. `lock/` reuses `fetch/`, `sandbox/`, `diff/`, `rules/` 
 ```
 
 No database, no `data/` writes and no persistent extraction roots on this path: a run that
-fails halfway leaves nothing behind but a possibly warmer download cache.
+fails halfway leaves nothing behind but a possibly warmer download cache. `--record-dir` is
+the one deliberate exception, and it writes only the record files the operator asked for.
 
 ### 2.2 Batch path — designed, not built
 
@@ -132,13 +136,17 @@ The monitored-package pipeline this document was written for. It is the target s
                                    store: findings, scores, dataset_records
  ══════════════════════════════ TRUST BOUNDARY ══════════════════════════════════════
                                         ▼
-              dataset/export.py ──▶ data/dataset/*.jsonl ──▶ labeling/ (M3)
+   compare/lock --record-dir ──▶ records/*.json  (AnalysisRecord)
+                                          │
+       labeling/ (human CSV + local OSV) ──▶ dataset/export.py ──▶ data/dataset/*.jsonl
                                           │
                                           ▼ (offline, separate command, separate env)
                                     model/ train · eval · explain   (M5)
 ```
 
-The double rule is a real architectural line, enforced by an import test (§5).
+The double rule is a real architectural line, enforced by an import test (§5). The
+`--record-dir → dataset/ → labeling/` half is implemented on the on-demand path; the batch
+pipeline that would feed it automatically is still the proposal drawn here.
 
 **Diff needs both sides.** In the batch design, extraction results are content-addressed by
 tarball SHA-256 and reused, so comparing vN against vN−1 costs one new extraction in the
@@ -245,6 +253,10 @@ Nothing on the implemented path opens this database: no shipped command imports 
 there is a schema, a connection and a repository exercised by tests, and no pipeline that
 writes to it. That is the M2 caveat in §8 stated where it lives.
 
+**M3 adds no migration.** `user_version` stays 1: the dataset path persists records as files
+under the operator's `--record-dir`, and `export-dataset` writes JSONL plus a manifest, so it
+records `sqlite_user_version: null` rather than claiming a schema it never touched.
+
 `Release` identity is `(ecosystem, package_name, version)` — unique index. `Finding`
 identity additionally carries `rule_id@rule_version`, so re-running a new rule version on an
 old release produces new rows instead of silently mutating history (rule-version changes
@@ -349,9 +361,9 @@ below is each checkpoint and whether it is actually proven today.
 |---|---|---|
 | **M1** — sandbox + fetch in isolation | The highest-risk surface holds alone, with no rules to reason about: every SPEC §4.3 rejection fires, no write lands outside the root, digests are verified before bytes are trusted. | **proven**, for tar and zip, npm and PyPI. Hypothesis property tests plus one test per rejection condition. |
 | **M2** — `DiffContext → Finding → ScoreResult` | The contract end-to-end on fixtures: rules see one object, the score is a pure deterministic function of findings, monotonicity holds, output is byte-stable. | **proven** on the on-demand path. `store/` is built and tested, but no shipped command writes a report to it — the "→ store" half of this arrow is a library, not a pipeline. |
-| **M3** — dataset soundness | Splits leak nothing, features carry no source text, the export validates against `DatasetRecord`, `rule_derived` labels are excluded from metrics. | **not built.** `features/`, `dataset/`, `labeling/` are empty packages; there is no export to validate and therefore no labeled dataset. |
+| **M3** — dataset soundness | Splits leak nothing, features carry no source text, the export validates against `DatasetRecord`, `rule_derived` labels are excluded from metrics. | **proven on the on-demand path.** `compare`/`lock --record-dir` write `AnalysisRecord` files; `export-dataset` joins labels, assigns the salted split and writes JSONL plus a manifest; `validate-dataset` re-checks every invariant. Tests assert the 69-key catalog, no source text in features, one split per package, and that `unknown` and holdout `rule_derived` are never metric-eligible. `data/labels/` ships empty, so no measured metric exists yet. |
 | **M4** — widened coverage | PyPI, crates.io, AST-level diff, rule families 3–4. | **partial.** PyPI `compare` ships (6 `PYPI_*` rules, sdist re-rooting, per-version registry metadata). Families 3–4 ship but are gated: 6 rules (`BASE64_BLOB_PRESENT`, `HEX_ESCAPE_DENSITY`, `HIGH_ENTROPY_STRINGS`, `DEPENDENCY_ADDED`, `PYPI_DEPENDENCY_ADDED`, `REPOSITORY_URL_CHANGED`) are off unless `--experimental`, and their weights are untuned. `crates.io` and `diff/ast.py` are not built; file-level diff is the only differ. |
-| **M5** — the model layer | A model trained on the M3 export, in a separate environment, whose output can never reach a `ScoreResult`. | **not built.** `model/` is an empty package. This is the correct outcome for now: M5 depends on M3, and M3 does not exist. |
+| **M5** — the model layer | A model trained on the M3 export, in a separate environment, whose output can never reach a `ScoreResult`. | **not built.** `model/` is an empty package. M3 now exists, but every export is `unknown` or `rule_derived` until human labels ship, so a trained model would still be unmeasurable. |
 
 Two things shipped that this milestone plan did not anticipate:
 
@@ -363,5 +375,5 @@ Two things shipped that this milestone plan did not anticipate:
   pkgwatch without parsing prose.
 
 The honest summary: the security-critical half of the design is built and tested, and the
-data-science half is not built at all. Anyone extending pkgwatch should treat §2.2 as the
-proposal it is, and should not claim M3–M5 progress from the code in §2.1.
+data path is built while the model is not. Anyone extending pkgwatch should treat §2.2's
+batch pipeline as the proposal it is, and should not claim M5 progress from the code in §2.1.

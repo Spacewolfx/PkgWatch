@@ -368,17 +368,21 @@ class DatasetRecord(BaseModel):
     artifact_sha256_old: str
     artifact_sha256_new: str
     analysis_incomplete: bool = False
-    metric_eligible: bool                # False for rule_derived on val/test
+    metric_eligible: bool                # False for unknown, and rule_derived on val/test
     label_provenance: str | None         # URL or human reviewer id + date
 ```
 
 `DatasetFinding` deliberately drops `path`, `evidence`, `details` and `line_*` — the dataset
 carries rule *identity*, not package text. Features are the same rule: `FeatureValue` is
 `int | float | bool | str`, and a `str` is validated against
-`^[A-Za-z0-9_.:/*@+-]{1,48}$` with an allow-list of known categorical vocabularies
-(`role`, `ecosystem`, `file_extension`, `change_type`, …). This makes "raw code smuggled
-into a feature" a schema error rather than a policy violation — it is the boundary that keeps
-the dataset safe to ship and safe to train on.
+`^[A-Za-z0-9_.:/*@+-]{1,48}$` with a closed allow-list of known categorical vocabularies.
+Exactly two exist: `ecosystem` ∈ {`npm`, `pypi`} and `file_dominant_role` ∈ every `FileRole`
+value. `change_type` and `role` appear only inside numeric feature names, never as a feature
+value, so they need no separate entry. **`file_extension` is deliberately not emitted**
+(operator decision 2026-11-14): an extension is attacker-controlled and unbounded, so it is
+a smuggling channel rather than a vocabulary. This makes "raw code smuggled into a feature"
+a schema error rather than a policy violation — it is the boundary that keeps the dataset
+safe to ship and safe to train on.
 
 Feature families (namespaced, non-overlapping): `size_*`, `file_*` (counts by role, added /
 removed / modified), `dep_*` (count and ratio of new dependencies), `capability_*` (one
@@ -475,9 +479,11 @@ Labels are the only non-deterministic input to the dataset, so they get the stri
    rationale is stored separately as `rationale_draft`, never in `label`, and it is not a
    label even if the reviewer agrees with it — the reviewer's own judgement is the label.
    Enforced: `label_source` has no `model` value.
-2. **Precedence when sources conflict:** `human` > `advisory_db` > `rule_derived`. The
-   winner's `label_source`/`label_confidence` are recorded, and the losing claims are kept in
-   a `label_conflicts` table (not in `DatasetRecord`) so disputes stay auditable.
+2. **Precedence when sources conflict:** `human` > `advisory_db` > `rule_derived` > `none`.
+   The winner's `label_source`/`label_confidence` are recorded, and the losing claims are
+   kept in `label_conflicts.jsonl` (a file, not a table — M3 has no database on this path;
+   operator decision 2026-11-14) so disputes stay auditable. A losing advisory claim after
+   the first advisory is `advisory_duplicate`; every other loser is `precedence`.
 3. **`human`** — CSV in `data/labels/human/`, columns
    `ecosystem,package_name,old_version,new_version,label,reviewer,reviewed_at,confidence,note`.
    Committed, with provenance. Default confidence 1.0; a reviewer may lower it.
@@ -487,8 +493,14 @@ Labels are the only non-deterministic input to the dataset, so they get the stri
    requires preserving copyright and license notices. Recorded in
    `data/labels/PROVENANCE.md` before any advisory-sourced export ships. Label is `malicious`
    only when the record's `package_name` matches **and** the version falls inside an
-   `affected[].ranges[].events` interval; anything else is `unknown`, never a guess. Default
-   confidence 0.9. `label_provenance` = the advisory ID and its commit SHA.
+   `affected[].ranges[].events` interval or in `affected[].versions[]`; a name match whose
+   version is outside every interval is an explicit `unknown` at 0.9 (it deliberately
+   outranks `rule_derived`: "the advisory database knows this package and does not accuse
+   this version"), never a guess. The OSV `introduced: "0"` sentinel is negative infinity;
+   an unparseable `fixed`/`last_affected` bound closes its interval without claiming
+   coverage. Default confidence 0.9. `label_provenance` = `osv:<id>:<file_sha256[:12]>`
+   (operator decision 2026-11-14): an OSV document carries no commit SHA, so the upstream
+   commit is recorded in `data/labels/PROVENANCE.md`, not fabricated into the provenance.
 5. **`rule_derived`** — weak, and treated as such: confidence **fixed at 0.3**, `label =
    suspicious` if `rule_score >= 40` else `benign`. `metric_eligible = False` for any
    `rule_derived` record in `val` or `test`. Training on them is allowed (they are a useful
@@ -496,7 +508,8 @@ Labels are the only non-deterministic input to the dataset, so they get the stri
    against the rules it was trained to imitate. Enforced by a validator in
    `dataset/validate.py` *and* asserted in `eval/`.
 6. **`unknown`** — the default. Never silently dropped from the export (it is the honest
-   denominator), but excluded from supervised training.
+   denominator), but excluded from supervised training. `unknown` is never metric-eligible
+   in **any** split, from any source (operator decision 2026-11-14, extending §7.5).
 7. Label files are committed data; every file in `data/labels/` needs a matching row in
    `PROVENANCE.md` with source URL, retrieval date, license, and SHA-256 of the file.
 
@@ -516,9 +529,11 @@ capture and `run_id`.
 `pkgwatch init` (config + db) · `watch add|list|remove` · `ingest <eco> [--package]` ·
 `fetch --release eco/name/version` · `check <eco> <name> <v_old> <v_new> [--offline-dir]`
 (the offline pair-analysis used by integration tests) · `score --release …` ·
-`export-dataset [--split]` · `validate-dataset` · `train|eval|explain` (M5, own entry) ·
-`compare npm:<name>@<old> npm:<name>@<new>` · `compare pypi:<name>@<old> pypi:<name>@<new>`
-(§9.2, PyPI JSON API) · `lock --old OLD_LOCK --new NEW_LOCK`
+`export-dataset --records DIR [--labels DIR] [--out DIR] [--json]` ·
+`validate-dataset --path FILE [--json]` · `train|eval|explain` (M5, own entry) ·
+`compare npm:<name>@<old> npm:<name>@<new> [--record-dir DIR]` ·
+`compare pypi:<name>@<old> pypi:<name>@<new> [--record-dir DIR]`
+(§9.2, PyPI JSON API) · `lock --old OLD_LOCK --new NEW_LOCK [--record-dir DIR]`
 (§9.1, implemented in `lock/` + `lockfile/`).
 
 `compare` reuses the verified download cache of §9.1(9) for both ecosystems (2026-11-10):
@@ -706,3 +721,22 @@ order; unbalanced or unparseable sets stay unpaired (`MULTIPLE_VERSIONS`).
 | A9 | `maintainers` as a per-version diff | Not supportable | TODO (open): `MAINTAINER_ADDED` deferred; package-level maintainers is a current-state snapshot |
 | A10 | `[obfuscation]` defaults in §6.5.1 and the family-3/4 severities in §4.5.1 | Operator decision, initial untuned values, not measured | TODO: challenge in `eval/`; never present them as measured detection quality |
 | A11 | Doc-level `repository.url`, `_npmUser`, `deprecated`, `devDependencies` as family-4 rules | Not implemented | TODO (open): no rule may be invented for them without an operator decision |
+
+### 10.1 M3 dataset — operator decisions (2026-11-14)
+
+These are decisions, not measurements. None changes a score weight; `weights_version`
+stays `w1`.
+
+| # | Decision |
+|---|---|
+| O1 | **M5 is deferred.** No labels ship, so a model trained today would be unmeasurable, and `numpy`/`scikit-learn` are new unapproved dependencies. |
+| O2 | **Record files, not SQL.** `compare`/`lock --record-dir` write one JSON per pair; M3 adds **no** store migration and `user_version` stays 1. |
+| O3 | **`file_extension` is never a feature.** It is an unbounded attacker-controlled vocabulary. |
+| O4 | **`unknown` is never metric-eligible**, in every split and from every source. |
+| O5 | **Advisory provenance is the file digest**, `osv:<id>:<file_sha256[:12]>`, not a commit SHA; the commit goes in `PROVENANCE.md`. |
+| O6 | **A name-matching advisory with the version outside every interval is `unknown` at 0.9** and outranks `rule_derived`. |
+| O7 | **PyPI `dep_added_ratio` mixes sources** (shipped `METADATA` numerator, registry `requires_dist` denominator); it is approximate and flagged by `dep_metadata_available`. |
+| O8 | **Capability features merge npm and PyPI rules semantically** (`JS_CHILD_PROCESS_ADDED` with `PYPI_SHELL_EXEC_ADDED`, etc.). |
+| O9 | **New files only under `data/dataset/` and `data/labels/human/`.** Nothing existing under `data/` is modified and `eval/measure_m2/` is untouched. |
+| O10 | **No new third-party dependencies.** Advisory data is operator-supplied local JSON; egress stays in `fetch/`. |
+| O11 | **A run-id collision is refused, not merged** (`EXPORT_RUN_EXISTS`); brand-new packages are dropped at record time and the export manifest records `skipped.new_package: null` rather than a false zero. |

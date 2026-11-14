@@ -117,6 +117,11 @@ uv run pkgwatch lock --old old.json --new new.json --config pkgwatch.toml
 uv run pkgwatch lock --old old.json --new new.json --baseline baseline.json
 uv run pkgwatch lock --old old.json --new new.json --update-baseline baseline.json --baseline-reason "reviewed in PR"
 uv run pkgwatch lock --old old.json --new new.json --markdown
+
+uv run pkgwatch compare npm:demo-pkg@1.0.0 npm:demo-pkg@1.1.0 --record-dir records
+uv run pkgwatch lock --old old.json --new new.json --record-dir records
+uv run pkgwatch export-dataset --records records --out data/dataset
+uv run pkgwatch validate-dataset --path data/dataset/<run_id>/dataset.jsonl --json
 ```
 
 Scoped names are accepted and percent-encoded (`@scope/pkg` becomes `@scope%2Fpkg`).
@@ -324,7 +329,8 @@ a tool failure.
 |---|---|
 | `0` | no findings at or above `--fail-on` |
 | `1` | one or more findings at or above `--fail-on` |
-| `2` | any error — fetch, digest, sandbox rejection or `analysis_incomplete` |
+| `2` | any error — fetch, digest, sandbox, record write or `analysis_incomplete` |
+| `1` | (only `validate-dataset`) the file is invalid content, per SPEC §6.4 |
 
 Errors print a stable code, never an exception message (those can contain package text):
 
@@ -636,6 +642,25 @@ change. Detection quality is still unmeasured (see the coverage table above).
 
 Not implemented yet: the `lock` command for PyPI, and wheel-binary analysis.
 
+## Dataset export (M3)
+
+`compare --record-dir DIR` and `lock --record-dir DIR` write one `AnalysisRecord` JSON per
+analysed changed pair (the unfiltered findings, re-scored, plus the two artifact SHA-256
+values and a 69-key feature catalog). `export-dataset` joins human CSV and local OSV advisory
+labels, assigns the salted permanent split from SPEC §6.3, and writes
+`data/dataset/<run_id>/{dataset.jsonl,manifest.json,label_conflicts.jsonl}`.
+`validate-dataset` re-checks every invariant from the file. An existing run directory is
+refused, never overwritten.
+
+`validate-dataset` exits `0` when the file is valid, `1` when its content is invalid, and `2`
+on a usage or read error — the one deliberate exception to the "any error is 2" rule, because
+an invalid dataset is a verdict about the data. Full flow, label precedence and feature
+catalog: [docs/dataset.md](docs/dataset.md).
+
+**No labels ship yet.** `data/labels/` is empty, so every export today is `unknown` or
+`rule_derived`; `unknown` is never metric-eligible and `rule_derived` is excluded from
+`val`/`test` metrics, so no classification metric may be reported on an export from this
+repository as it stands. M5 (the model layer) remains not built.
 
 ## Open assumptions (TODO)
 

@@ -5,6 +5,57 @@ All notable changes to pkgwatch are documented here. The format is kept close to
 states whether its detection quality was measured — most is not, and nothing here is proof
 of malicious behaviour.
 
+## Unreleased — M3 dataset soundness
+
+Turns the pairs `compare` and `lock` already analyse into a sound, reproducible,
+label-joined dataset. Static analysis only; no package content is executed and no model is
+trained. Detection quality remains unmeasured.
+
+### Added — record seam
+
+- `compare --record-dir DIR` and `lock --record-dir DIR` write one `AnalysisRecord` JSON per
+  analysed changed pair: the unfiltered findings (pre-`--ignore`, pre-baseline) re-scored,
+  both artifact SHA-256 values, the resolved `config_sha256`, the `experimental` flag and a
+  69-key feature catalog. The filename is the SHA-256 of the identity, so scoped npm names
+  and `+`/`~` versions never reach the filesystem. Re-recording is byte-identical.
+- Brand-new packages are not recorded (no old artifact), incomplete analyses are recorded
+  but never exported, and a failed `lock` record write is a counted per-pair skip
+  (`record_errors`) rather than an aborted run. Existing report bytes are unchanged.
+
+### Added — labels
+
+- `labeling/human.py`: reviewer CSV with whole-file rejection, stable `LABEL_CSV_INVALID` /
+  `LABEL_VALUE_INVALID` / `HUMAN_LABEL_DUPLICATE` codes, and a `note` column that is parsed
+  and then dropped.
+- `labeling/advisory.py`: operator-supplied local OSV JSON (OpenSSF `malicious-packages`,
+  Apache-2.0). Name match plus interval or `versions[]` membership ⇒ `malicious`; a name
+  match with the version outside every interval ⇒ explicit `unknown` at 0.9. The OSV
+  `introduced: "0"` sentinel is honoured and malformed bounds fail closed.
+- `labeling/policy.py`: precedence `human` > `advisory_db` > `rule_derived` > `none`, with
+  every losing claim kept in `label_conflicts.jsonl` (`precedence` / `advisory_duplicate`).
+
+### Added — export and validation
+
+- `features/`: a closed catalog of 69 features (size, file, dep, capability, obfuscation,
+  manifest, score, ecosystem) derived from the diff and findings only, with every float
+  rounded to 6 places. No path, evidence or source text can become a feature.
+- `dataset/split.py`: the salted permanent split from SPEC §6.3.
+- `dataset/export.py`: `export-dataset --records DIR [--labels DIR] [--out DIR] [--json]`
+  joins labels, assigns splits, refuses inhomogeneous record sets and existing run
+  directories, and writes `dataset.jsonl`, `manifest.json` and `label_conflicts.jsonl`.
+- `dataset/validate.py`: `validate-dataset --path FILE [--json]` re-checks every invariant
+  from the file. It exits `1` for invalid content (a verdict about the data) and `2` for a
+  tool error.
+- `LabelSource.NONE`, a closed categorical feature vocabulary, and `AnalysisRecord`; `unknown`
+  is now never metric-eligible in any split.
+
+### Notes
+
+- `data/labels/` ships empty, so every export today is `unknown` or `rule_derived` and no
+  classification metric may be reported on it. M5 (the model layer) is still not built.
+- M3 adds **no** store migration: `user_version` stays 1 and the manifest records
+  `sqlite_user_version: null`. Documentation: `docs/dataset.md`.
+
 ## 0.2.0 — 2026-11-12
 
 Everything since `v0.1.0` (static npm `compare` + `lock`). Detection quality remains

@@ -7,8 +7,10 @@ import pytest
 from pydantic import ValidationError
 
 from pkgwatch.models import (
+    FEATURE_VOCABULARY,
     DatasetFinding,
     DatasetRecord,
+    FileRole,
     Finding,
     Label,
     LabelSource,
@@ -213,3 +215,14 @@ def test_an_explicit_eligible_unknown_is_rejected() -> None:
             split="train",
             metric_eligible=True,
         )
+
+
+def test_a_categorical_outside_its_vocabulary_is_rejected() -> None:
+    with pytest.raises(ValidationError, match="closed vocabulary"):
+        make_record(features={"file_dominant_role": "payload"})
+
+
+def test_the_vocabulary_covers_exactly_the_emitted_categoricals() -> None:
+    assert set(FEATURE_VOCABULARY) == {"ecosystem", "file_dominant_role"}
+    assert FEATURE_VOCABULARY["ecosystem"] == frozenset({"npm", "pypi"})
+    assert FEATURE_VOCABULARY["file_dominant_role"] == frozenset(item.value for item in FileRole)

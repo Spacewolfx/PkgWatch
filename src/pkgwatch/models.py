@@ -34,6 +34,8 @@ _FEATURE_CATEGORY_RE = re.compile(r"^[A-Za-z0-9_.:/*@+\-]{1,48}$")
 _DETAIL_KEY_MAX = 64
 _DETAIL_VALUE_MAX = 64
 
+FeatureValue = int | float | bool | str
+
 
 class Ecosystem(StrEnum):
     NPM = "npm"
@@ -69,6 +71,14 @@ class FileRole(StrEnum):
     VENDOR = "vendor"
     BINARY = "binary"
     OTHER = "other"
+
+
+# SPEC §6.2's allow-list. file_extension is deliberately absent: an extension is
+# attacker-controlled and unbounded, so it is a smuggling channel, not a vocabulary.
+FEATURE_VOCABULARY: dict[str, frozenset[str]] = {
+    "ecosystem": frozenset({Ecosystem.NPM.value, Ecosystem.PYPI.value}),
+    "file_dominant_role": frozenset(item.value for item in FileRole),
+}
 
 
 class ArchiveFormat(StrEnum):
@@ -421,15 +431,37 @@ class ScoreResult(BaseModel):
     boosts: tuple[ScoreBoost, ...] = ()
 
 
+def validate_features(value: dict[str, FeatureValue]) -> dict[str, FeatureValue]:
+    """The one feature boundary, shared by every record type (SPEC §6.2)."""
+    for name, item in value.items():
+        if not _FEATURE_NAME_RE.fullmatch(name):
+            raise ValueError(f"invalid feature name: {name[:32]!r}")
+        if isinstance(item, bool):
+            continue
+        if isinstance(item, int | float):
+            if isinstance(item, float) and not math.isfinite(item):
+                raise ValueError(f"non-finite feature value for {name!r}")
+            continue
+        if isinstance(item, str):
+            if not _FEATURE_CATEGORY_RE.fullmatch(item):
+                raise ValueError(
+                    f"feature {name!r} looks like raw text; features must be numeric "
+                    "or a bounded categorical token"
+                )
+            allowed = FEATURE_VOCABULARY.get(name)
+            if allowed is not None and item not in allowed:
+                raise ValueError(f"feature {name!r} is outside its closed vocabulary")
+            continue
+        raise ValueError(f"unsupported feature value type for {name!r}")
+    return value
+
+
 class DatasetFinding(BaseModel):
     model_config = _STRICT
 
     rule_id: str = Field(min_length=1, max_length=96, pattern=r"^[A-Z][A-Z0-9_]*$")
     rule_version: int = Field(ge=1)
     severity: Severity
-
-
-FeatureValue = int | float | bool | str
 
 
 class DatasetRecord(BaseModel):
@@ -461,24 +493,7 @@ class DatasetRecord(BaseModel):
     @field_validator("features")
     @classmethod
     def _bounded_features(cls, value: dict[str, FeatureValue]) -> dict[str, FeatureValue]:
-        for name, item in value.items():
-            if not _FEATURE_NAME_RE.fullmatch(name):
-                raise ValueError(f"invalid feature name: {name[:32]!r}")
-            if isinstance(item, bool):
-                continue
-            if isinstance(item, int | float):
-                if isinstance(item, float) and not math.isfinite(item):
-                    raise ValueError(f"non-finite feature value for {name!r}")
-                continue
-            if isinstance(item, str):
-                if not _FEATURE_CATEGORY_RE.fullmatch(item):
-                    raise ValueError(
-                        f"feature {name!r} looks like raw text; features must be numeric "
-                        "or a bounded categorical token"
-                    )
-                continue
-            raise ValueError(f"unsupported feature value type for {name!r}")
-        return value
+        return validate_features(value)
 
     @field_validator("artifact_sha256_old", "artifact_sha256_new")
     @classmethod

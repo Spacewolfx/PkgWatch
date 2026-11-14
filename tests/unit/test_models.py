@@ -10,6 +10,7 @@ from pkgwatch.models import (
     DatasetFinding,
     DatasetRecord,
     Finding,
+    Label,
     LabelSource,
     RejectionCode,
     Release,
@@ -177,3 +178,19 @@ def test_sandbox_rejection_offending_path_is_capped_and_sanitised() -> None:
         offending_path="a\x00b\x1fc",
     )
     assert control.offending_path == "a?b?c"
+
+
+def test_a_record_with_no_label_claim_is_unknown() -> None:
+    record = make_record(label="unknown", label_source="none", label_confidence=0.0)
+    assert record.label_source is LabelSource.NONE
+    assert record.label is Label.UNKNOWN
+
+
+def test_no_claim_may_not_assert_a_label() -> None:
+    with pytest.raises(ValidationError, match="no label claim"):
+        make_record(label="benign", label_source="none", label_confidence=0.0)
+
+
+def test_no_claim_may_not_carry_confidence() -> None:
+    with pytest.raises(ValidationError, match=r"confidence 0.0"):
+        make_record(label="unknown", label_source="none", label_confidence=0.5)

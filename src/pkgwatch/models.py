@@ -132,6 +132,7 @@ class LabelSource(StrEnum):
     HUMAN = "human"
     ADVISORY_DB = "advisory_db"
     RULE_DERIVED = "rule_derived"
+    NONE = "none"
 
 
 class Split(StrEnum):
@@ -507,6 +508,11 @@ class DatasetRecord(BaseModel):
 
     @model_validator(mode="after")
     def _label_policy(self) -> DatasetRecord:
+        if self.label_source is LabelSource.NONE:
+            if self.label is not Label.UNKNOWN:
+                raise ValueError("a record with no label claim must be unknown")
+            if self.label_confidence != 0.0:
+                raise ValueError("a record with no label claim has confidence 0.0")
         if self.label_source is LabelSource.RULE_DERIVED:
             if self.label not in {Label.BENIGN, Label.SUSPICIOUS}:
                 raise ValueError("rule_derived labels may only be benign or suspicious")

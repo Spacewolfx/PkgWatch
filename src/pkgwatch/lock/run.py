@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from pkgwatch.config import Config, LockConfig
+from pkgwatch.dataset.errors import DatasetError
+from pkgwatch.dataset.record import record_pair
 from pkgwatch.diff import build_diff_context
 from pkgwatch.diff.manifest import diff_root_manifests, manifest_parse_errors
 from pkgwatch.fetch.cache import DownloadCache
@@ -90,6 +92,7 @@ class PairAnalysis:
     acknowledged: tuple[Finding, ...] = ()
     error: str | None = None
     parse_problems: tuple[str, ...] = ()
+    record_error: bool = False
 
 
 @dataclass(frozen=True)
@@ -139,6 +142,7 @@ class LockRunResult:
     pairs: tuple[PairAnalysis, ...]
     new_analyses: tuple[NewPackageAnalysis, ...] = ()
     new_analysed: bool = True
+    record_errors: int = 0
 
     @property
     def incomplete(self) -> bool:
@@ -159,6 +163,7 @@ def run_lock(
     analyse_new: bool = True,
     baseline: Sequence[BaselineEntry] = (),
     experimental: bool = False,
+    record_dir: Path | None = None,
 ) -> LockRunResult:
     """Plan two lockfiles, then analyse every changed pair. Raises only for plan errors."""
     limits = (
@@ -187,6 +192,7 @@ def run_lock(
         cache=cache,
         baseline_keys=baseline_keys,
         experimental=experimental,
+        record_dir=record_dir,
     )
     # Unsupported new packages are already counted as unanalysed by the plan; only the
     # registry-backed ones are fetched.
@@ -210,7 +216,11 @@ def run_lock(
         else ()
     )
     return LockRunResult(
-        plan=plan, pairs=pairs, new_analyses=new_analyses, new_analysed=analyse_new
+        plan=plan,
+        pairs=pairs,
+        new_analyses=new_analyses,
+        new_analysed=analyse_new,
+        record_errors=sum(1 for item in pairs if item.record_error),
     )
 
 
@@ -249,6 +259,7 @@ def _analyse(
     cache: DownloadCache | None,
     baseline_keys: frozenset[BaselineKey],
     experimental: bool = False,
+    record_dir: Path | None = None,
 ) -> tuple[PairAnalysis, ...]:
     if not changed:
         return ()
@@ -264,6 +275,7 @@ def _analyse(
                     cache=cache,
                     baseline_keys=baseline_keys,
                     experimental=experimental,
+                    record_dir=record_dir,
                 ),
                 changed,
             )
@@ -280,6 +292,7 @@ def _analyse_pair(
     cache: DownloadCache | None,
     baseline_keys: frozenset[BaselineKey],
     experimental: bool = False,
+    record_dir: Path | None = None,
 ) -> PairAnalysis:
     ignored_set = frozenset(ignored)
     try:
@@ -325,6 +338,22 @@ def _analyse_pair(
                 )
             except _IncompleteAnalysis as exc:
                 return _failed(pair, ANALYSIS_INCOMPLETE, parse_problems=exc.parse_problems)
+            record_error = False
+            if record_dir is not None:
+                try:
+                    record_pair(
+                        ctx=analysed.ctx,
+                        findings=analysed.all_findings,
+                        old_path=fetched.old.path,
+                        new_path=fetched.new.path,
+                        config=config,
+                        experimental=experimental,
+                        directory=record_dir,
+                    )
+                except DatasetError:
+                    # A record that cannot be written is a per-pair skip, never a reason to
+                    # abort the whole lock run (reports stay complete, SPEC §9.1(7)).
+                    record_error = True
             return PairAnalysis(
                 name=pair.name,
                 old_version=pair.old_version,
@@ -337,6 +366,7 @@ def _analyse_pair(
                 ignored=analysed.ignored,
                 baselined=len(analysed.baselined),
                 acknowledged=analysed.scored + analysed.baselined,
+                record_error=record_error,
             )
     except FetchError as exc:
         return _failed(pair, exc.code.value)

@@ -7,6 +7,7 @@ synthetic fixture trees. No live registry, no sockets, and no package content is
 from __future__ import annotations
 
 import datetime
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -1347,3 +1348,68 @@ def test_sarif_lock_marks_an_incomplete_analysis(
     note_ids = _sarif_note_ids(run)
     assert "ANALYSIS_INCOMPLETE" in note_ids
     assert "PACKAGE_ERRORS" in note_ids
+
+
+def _record_name(package: str, old: str, new: str) -> str:
+    token = f"npm|{package}|{old}|{new}"
+    return hashlib.sha256(token.encode("utf-8")).hexdigest() + ".json"
+
+
+def test_record_dir_writes_one_record_per_changed_pair(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client, old_lock, new_lock = _setup(
+        tmp_path, case_registry(tmp_path, INSTALLER, name="installer-pkg")
+    )
+    records = tmp_path / "records"
+
+    before = _run(capsys, client, old_lock, new_lock, "--json")
+    after = _run(capsys, client, old_lock, new_lock, "--json", "--record-dir", str(records))
+
+    # Recording is invisible: same exit code, same stdout, same stderr, byte for byte.
+    assert after == before
+    files = list(records.glob("*.json"))
+    assert [path.name for path in files] == [_record_name("installer-pkg", OLD, NEW)]
+    record = json.loads(files[0].read_text(encoding="utf-8"))
+    assert (record["package_name"], record["old_version"], record["new_version"]) == (
+        "installer-pkg",
+        OLD,
+        NEW,
+    )
+    assert len(record["features"]) == 69
+
+
+def test_plan_with_record_dir_is_a_conflict(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client, old_lock, new_lock = _plan_inputs(tmp_path)
+    records = tmp_path / "records"
+
+    code, out, err = _run(
+        capsys, client, old_lock, new_lock, "--plan", "--record-dir", str(records)
+    )
+
+    assert code == 2
+    assert err.strip() == "RECORD_OPTIONS_CONFLICT"
+    assert "changed pairs:" not in out
+    assert client.requests == []
+    assert not records.exists()
+
+
+def test_a_record_write_failure_does_not_abort_the_run(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client, old_lock, new_lock = _setup(
+        tmp_path, case_registry(tmp_path, INSTALLER, name="installer-pkg")
+    )
+    records = tmp_path / "records"
+    records.mkdir()
+    # A directory sits where the record file must go, so the atomic replace cannot succeed.
+    (records / _record_name("installer-pkg", OLD, NEW)).mkdir()
+
+    code, out, _ = _run(capsys, client, old_lock, new_lock, "--json", "--record-dir", str(records))
+    payload = json.loads(out)
+
+    assert code == 1
+    assert payload["record_errors"] == 1
+    assert [item["rule_id"] for item in payload["pairs"][0]["findings"]] == FOUR_RULES_DISPLAY_ORDER

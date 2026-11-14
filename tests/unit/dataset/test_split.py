@@ -49,7 +49,7 @@ def test_names_exist_on_both_sides_of_each_threshold() -> None:
 
 def test_the_distribution_is_roughly_seventy_fifteen_fifteen() -> None:
     names = [f"pkg-{index}" for index in range(2000)]
-    counts = {split: 0 for split in Split}
+    counts = dict.fromkeys(Split, 0)
     for name in names:
         counts[assign_split("npm", name)] += 1
     assert abs(counts[Split.TRAIN] / 2000 - 0.70) < 0.05

@@ -6,13 +6,12 @@ import hashlib
 import json
 from pathlib import Path
 
-from tests.support.context import ctx_from_files
-
 from pkgwatch.config import Config
 from pkgwatch.dataset.canonical import canonical_json, digest_of
 from pkgwatch.dataset.record import record_filename, record_pair
 from pkgwatch.models import AnalysisRecord
 from pkgwatch.rules import rule_set_version
+from tests.support.context import ctx_from_files
 
 
 def test_the_filename_is_a_hash_not_a_package_name() -> None:

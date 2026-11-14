@@ -1013,3 +1013,33 @@ def test_sarif_compare_surfaces_changed_files_omitted(
         str(item["descriptor"]["id"]) for item in invocations[0]["toolExecutionNotifications"]
     }
     assert "CHANGED_FILES_OMITTED" in note_ids
+
+
+def test_record_dir_writes_one_record_without_changing_the_report(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    registry = make_registry(tmp_path, BENIGN)
+    records = tmp_path / "records"
+    code, out, err = _run(capsys, registry, "--json", "--record-dir", str(records))
+    assert code == 0, err
+    report = json.loads(out)
+    assert report["schema_version"] == 2
+
+    again, out2, _ = _run(capsys, registry, "--json")
+    assert again == 0
+    assert json.loads(out2) == report
+
+    files = list(records.glob("*.json"))
+    assert len(files) == 1
+    record = json.loads(files[0].read_text(encoding="utf-8"))
+    assert len(record["features"]) == 69
+    assert record["ecosystem"] == "npm"
+
+
+def test_record_dir_rejects_a_file_path(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    registry = make_registry(tmp_path, BENIGN)
+    blocker = tmp_path / "blocker"
+    blocker.write_text("not a directory", encoding="utf-8")
+    code, _, err = _run(capsys, registry, "--record-dir", str(blocker))
+    assert code == 2
+    assert "RECORD_DIR_INVALID" in err

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import html
 from collections.abc import Mapping, Sequence
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 from pkgwatch.lock.run import LockRunResult, NewPackageAnalysis, PairAnalysis
 from pkgwatch.lockfile import LockPlan
@@ -148,6 +148,8 @@ class LockReport(TypedDict):
     analysis_incomplete: bool
     measured: bool
     disclaimer: str
+    # Present only when a --record-dir write failed; existing reports stay byte-identical.
+    record_errors: NotRequired[int]
 
 
 def build_report(
@@ -164,7 +166,7 @@ def build_report(
     baselined = sum(item.baselined for item in result.pairs) + sum(
         item.baselined for item in result.new_analyses
     )
-    return LockReport(
+    report = LockReport(
         schema_version=LOCK_JSON_SCHEMA_VERSION,
         ecosystem=Ecosystem.NPM.value,
         old_lockfile=old_lockfile,
@@ -215,6 +217,9 @@ def build_report(
         measured=False,
         disclaimer=disclaimer,
     )
+    if result.record_errors:
+        report["record_errors"] = result.record_errors
+    return report
 
 
 def _pair_out(pair: PairAnalysis, *, verbose: bool) -> PairOut:

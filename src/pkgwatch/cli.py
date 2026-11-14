@@ -26,6 +26,8 @@ from typing import Any, NotRequired, TypedDict
 
 from pkgwatch import __version__
 from pkgwatch.config import Config
+from pkgwatch.dataset import export_dataset, record_pair, validate_dataset
+from pkgwatch.dataset.errors import DatasetError
 from pkgwatch.diff import build_diff_context
 from pkgwatch.diff.manifest import (
     ManifestChanges,
@@ -44,6 +46,7 @@ from pkgwatch.fetch.npm import (
     fetch_pair,
     parse_spec,
 )
+from pkgwatch.labeling.errors import LabelError
 from pkgwatch.lock import plan_lock, run_lock
 from pkgwatch.lock.baseline import (
     BASELINE_REASON_REQUIRED,
@@ -83,14 +86,31 @@ DISCLAIMER = (
     "Detection quality has not been measured. Findings are signals for human "
     "review, not proof of malicious behaviour."
 )
+ADVISORY_JSON_INVALID = "ADVISORY_JSON_INVALID"
 ANALYSIS_INCOMPLETE = "ANALYSIS_INCOMPLETE"
 CONFIG_NOT_FOUND = "CONFIG_NOT_FOUND"
 CONFIG_INVALID = "CONFIG_INVALID"
 CONFIG_WRITE_FAILED = "CONFIG_WRITE_FAILED"
+DATASET_DUPLICATE_PAIR = "DATASET_DUPLICATE_PAIR"
+DATASET_FEATURE_INVALID = "DATASET_FEATURE_INVALID"
+DATASET_INCOMPLETE_RECORD = "DATASET_INCOMPLETE_RECORD"
+DATASET_METRIC_INELIGIBLE = "DATASET_METRIC_INELIGIBLE"
+DATASET_RECORD_INHOMOGENEOUS = "DATASET_RECORD_INHOMOGENEOUS"
+DATASET_RECORD_INVALID = "DATASET_RECORD_INVALID"
+DATASET_SPLIT_CONFLICT = "DATASET_SPLIT_CONFLICT"
+DATASET_SPLIT_MISMATCH = "DATASET_SPLIT_MISMATCH"
+EXPORT_NO_RECORDS = "EXPORT_NO_RECORDS"
+EXPORT_RUN_EXISTS = "EXPORT_RUN_EXISTS"
+HUMAN_LABEL_DUPLICATE = "HUMAN_LABEL_DUPLICATE"
 INTERNAL_ERROR = "INTERNAL_ERROR"
 INVALID_SPEC = "INVALID_SPEC"
+LABEL_CSV_INVALID = "LABEL_CSV_INVALID"
+LABEL_VALUE_INVALID = "LABEL_VALUE_INVALID"
 OUTPUT_OPTIONS_CONFLICT = "OUTPUT_OPTIONS_CONFLICT"
 OUTPUT_WRITE_FAILED = "OUTPUT_WRITE_FAILED"
+RECORD_DIR_INVALID = "RECORD_DIR_INVALID"
+RECORD_OPTIONS_CONFLICT = "RECORD_OPTIONS_CONFLICT"
+RECORD_WRITE_FAILED = "RECORD_WRITE_FAILED"
 UNKNOWN_RULE_ID = "UNKNOWN_RULE_ID"
 
 CHANGED_FILES_LIMIT = 50
@@ -419,6 +439,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="disable the verified download cache for this run",
     )
+    compare.add_argument(
+        "--record-dir",
+        metavar="DIR",
+        default=None,
+        help="write one dataset record per analysed pair into DIR (M3)",
+    )
 
     lock = sub.add_parser("lock", help="report what a package-lock.json update changes, statically")
     lock.add_argument("--old", required=True, metavar="OLD_LOCK", help="old package-lock.json")
@@ -513,6 +539,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="disable the verified download cache for this run",
     )
     lock.add_argument(
+        "--record-dir",
+        metavar="DIR",
+        default=None,
+        help="write one dataset record per analysed changed pair into DIR (M3)",
+    )
+    lock.add_argument(
         "--strict-skips",
         action="store_true",
         help="exit 2 when a changed or brand-new package could not be analysed",
@@ -528,6 +560,37 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="print the plan only (no network, no analysis)",
     )
+
+    export = sub.add_parser(
+        "export-dataset",
+        help="join labels, assign splits and write an exported dataset JSONL",
+    )
+    export.add_argument(
+        "--records",
+        required=True,
+        metavar="DIR",
+        help="directory of AnalysisRecord JSON files written by --record-dir",
+    )
+    export.add_argument(
+        "--labels",
+        metavar="DIR",
+        default="data/labels",
+        help="human/*.csv and advisories/*.json live under this directory (default: data/labels)",
+    )
+    export.add_argument(
+        "--out",
+        metavar="DIR",
+        default="data/dataset",
+        help="write <out>/<run_id>/ here (default: data/dataset)",
+    )
+    export.add_argument("--json", dest="as_json", action="store_true", help="emit JSON")
+
+    validate = sub.add_parser(
+        "validate-dataset",
+        help="re-check every invariant of an exported dataset JSONL",
+    )
+    validate.add_argument("--path", required=True, metavar="FILE", help="dataset JSONL file")
+    validate.add_argument("--json", dest="as_json", action="store_true", help="emit JSON")
 
     return parser
 
@@ -559,6 +622,12 @@ def main(
 
     if args.command == "lock":
         return _cmd_lock(args, client=client, config=config)
+
+    if args.command == "export-dataset":
+        return _cmd_export_dataset(args)
+
+    if args.command == "validate-dataset":
+        return _cmd_validate_dataset(args)
 
     parser.print_help()
     return 2
@@ -683,6 +752,9 @@ def _cmd_compare(
     if any(item not in known for item in ignored):
         return _error(UNKNOWN_RULE_ID, structured_json)
 
+    record_dir = _resolve_record_dir(args.record_dir, structured_json)
+    if isinstance(record_dir, int):
+        return record_dir
     cache = None
     if not args.no_cache:
         cache = DownloadCache(active_config.fetch.cache_dir or default_cache_dir())
@@ -700,6 +772,7 @@ def _cmd_compare(
             ignored=ignored,
             experimental=bool(args.experimental),
             cache=cache,
+            record_dir=record_dir,
         )
     except FetchError as exc:
         return _error(exc.code.value, structured_json)
@@ -783,6 +856,8 @@ def _cmd_lock(
         return _error(UNKNOWN_RULE_ID, structured_json)
     if args.plan and (args.baseline or args.update_baseline):
         return _error(BASELINE_WITH_PLAN, structured_json)
+    if args.plan and args.record_dir:
+        return _error(RECORD_OPTIONS_CONFLICT, structured_json)
     if args.update_baseline and not args.baseline_reason:
         return _error(BASELINE_REASON_REQUIRED, structured_json)
     baseline_entries: tuple[BaselineEntry, ...] = ()
@@ -793,6 +868,9 @@ def _cmd_lock(
             return _error(exc.code, structured_json)
         if not args.baseline_allow_lifecycle:
             baseline_entries = _without_lifecycle(baseline_entries)
+    record_dir = _resolve_record_dir(args.record_dir, structured_json)
+    if isinstance(record_dir, int):
+        return record_dir
     cache = None
     if not args.no_cache:
         cache = DownloadCache(active_config.lock.cache_dir or default_cache_dir())
@@ -837,6 +915,7 @@ def _cmd_lock(
             ignored_reasons=reasons,
             update_baseline_path=(Path(args.update_baseline) if args.update_baseline else None),
             baseline_reason=args.baseline_reason or "",
+            record_dir=record_dir,
         )
     except LockfileError as exc:
         return _error(exc.code.value, structured_json, argument=exc.argument)
@@ -867,6 +946,67 @@ def _cmd_lock(
     ):
         return _error(OUTPUT_WRITE_FAILED, structured_json)
     return lock_exit
+
+
+def _cmd_export_dataset(args: argparse.Namespace) -> int:
+    json_mode = bool(args.as_json)
+    try:
+        result = export_dataset(
+            records=Path(args.records), labels=Path(args.labels), out=Path(args.out)
+        )
+    except (DatasetError, LabelError) as exc:
+        return _error(exc.code, json_mode)
+    except OSError:
+        return _error(INTERNAL_ERROR, json_mode)
+
+    if json_mode:
+        summary = {
+            "run_id": result.run_id,
+            "directory": str(result.directory),
+            "record_count": result.record_count,
+            "skipped_incomplete": result.skipped_incomplete,
+            "label_counts": result.label_counts,
+            "split_counts": result.split_counts,
+            "conflict_count": result.conflict_count,
+        }
+        print(json.dumps(summary, sort_keys=True))
+        return 0
+
+    print(f"run: {result.run_id}")
+    print(f"dataset: {result.directory}")
+    print(f"records: {result.record_count} (skipped incomplete: {result.skipped_incomplete})")
+    print(f"conflicts: {result.conflict_count}")
+    print("splits: " + ", ".join(f"{name}={count}" for name, count in result.split_counts.items()))
+    print(DISCLAIMER)
+    return 0
+
+
+def _cmd_validate_dataset(args: argparse.Namespace) -> int:
+    json_mode = bool(args.as_json)
+    try:
+        report = validate_dataset(Path(args.path))
+    except OSError:
+        return _error(DATASET_RECORD_INVALID, json_mode)
+
+    payload = {
+        "ok": report.ok,
+        "record_count": report.record_count,
+        "errors": [
+            {"code": issue.code, "line": issue.line, "detail": issue.detail}
+            for issue in report.issues
+        ],
+    }
+    if json_mode:
+        print(json.dumps(payload, sort_keys=True))
+    else:
+        print(f"dataset: {args.path}")
+        print(f"records: {report.record_count}")
+        print("ok" if report.ok else f"invalid: {len(report.issues)} issue(s)")
+        for issue in report.issues:
+            print(f"  line {issue.line}: {issue.code} {issue.detail}".rstrip())
+        print(DISCLAIMER)
+    # Spec §6.4: invalid content is a verdict about the data, not a tool error.
+    return 0 if report.ok else 1
 
 
 def _emit_output(
@@ -941,6 +1081,7 @@ def _compare(
     ignored: Sequence[str],
     experimental: bool = False,
     cache: DownloadCache | None = None,
+    record_dir: Path | None = None,
 ) -> tuple[CompareReport, int]:
     ecosystem, old_name, old_version = _route(first)
     _new_ecosystem, new_name, new_version = _route(second)
@@ -1031,6 +1172,19 @@ def _compare(
             families=families_by_rule_id(),
             rule_set_version=rule_set_version(),
         )
+        if record_dir is not None:
+            try:
+                record_pair(
+                    ctx=ctx,
+                    findings=all_findings,
+                    old_path=pair.old.path,
+                    new_path=pair.new.path,
+                    config=config,
+                    experimental=experimental,
+                    directory=record_dir,
+                )
+            except DatasetError as exc:
+                raise CompareError(exc.code) from None
         changed = _changed_files(ctx.changes)
         shown = changed if verbose else changed[:CHANGED_FILES_LIMIT]
         report = _report(
@@ -1104,6 +1258,7 @@ def _lock(
     update_baseline_path: Path | None = None,
     baseline_reason: str = "",
     experimental: bool = False,
+    record_dir: Path | None = None,
 ) -> tuple[LockReport, int]:
     result = run_lock(
         old_lock=Path(old_lock),
@@ -1116,6 +1271,7 @@ def _lock(
         analyse_new=not no_new,
         baseline=baseline,
         experimental=experimental,
+        record_dir=record_dir,
     )
     report = build_report(
         result,
@@ -1925,6 +2081,20 @@ def _format_rules_markdown(catalog: RuleCatalogReport) -> str:
             f"{_md_escape(entry['why_it_matters'])} | {_md_escape(entry['common_benign_causes'])} |"
         )
     return "\n".join(lines)
+
+
+def _resolve_record_dir(value: str | None, json_mode: bool) -> Path | int | None:
+    """None means no recording; an int is an exit code already reported."""
+    if value is None:
+        return None
+    path = Path(value)
+    if path.exists() and not path.is_dir():
+        return _error(RECORD_DIR_INVALID, json_mode)
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return _error(RECORD_DIR_INVALID, json_mode)
+    return path
 
 
 def _error(

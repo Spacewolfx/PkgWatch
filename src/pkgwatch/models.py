@@ -494,15 +494,19 @@ class DatasetRecord(BaseModel):
             return data
         source = data.get("label_source")
         split = data.get("split")
+        label = data.get("label")
         source_value = getattr(source, "value", source)
         split_value = getattr(split, "value", split)
+        label_value = getattr(label, "value", label)
         weak_on_holdout = source_value == LabelSource.RULE_DERIVED and split_value in {
             Split.VAL.value,
             Split.TEST.value,
         }
-        if weak_on_holdout:
+        if weak_on_holdout or label_value == Label.UNKNOWN.value:
             if data.get("metric_eligible") is True:
-                raise ValueError("rule_derived labels are never metric-eligible on val/test")
+                raise ValueError(
+                    "unknown and holdout rule_derived labels are never metric-eligible"
+                )
             return {**data, "metric_eligible": False}
         return {"metric_eligible": True, **data}
 

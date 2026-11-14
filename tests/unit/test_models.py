@@ -194,3 +194,22 @@ def test_no_claim_may_not_assert_a_label() -> None:
 def test_no_claim_may_not_carry_confidence() -> None:
     with pytest.raises(ValidationError, match=r"confidence 0.0"):
         make_record(label="unknown", label_source="none", label_confidence=0.5)
+
+
+def test_unknown_labels_are_never_metric_eligible() -> None:
+    for split in ("train", "val", "test"):
+        record = make_record(
+            label="unknown", label_source="none", label_confidence=0.0, split=split
+        )
+        assert record.metric_eligible is False, split
+
+
+def test_an_explicit_eligible_unknown_is_rejected() -> None:
+    with pytest.raises(ValidationError, match="metric-eligible"):
+        make_record(
+            label="unknown",
+            label_source="none",
+            label_confidence=0.0,
+            split="train",
+            metric_eligible=True,
+        )

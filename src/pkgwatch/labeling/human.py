@@ -7,6 +7,7 @@ dropped: reviewer prose never reaches a shipped dataset.
 from __future__ import annotations
 
 import csv
+import io
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -69,13 +70,17 @@ def _rows(path: Path) -> list[dict[str, str]]:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         raise LabelError("LABEL_CSV_INVALID") from None
-    reader = csv.DictReader(text.splitlines())
-    if tuple(reader.fieldnames or ()) != HUMAN_COLUMNS:
-        raise LabelError("LABEL_CSV_INVALID", row=1)
     try:
+        # newline="" is the documented construction: ``str.splitlines()`` also splits on
+        # \v, \f, \x1c-\x1e, \x85 and U+2028/9, which would cut a quoted note into extra
+        # records before csv ever sees it.
+        reader = csv.DictReader(io.StringIO(text, newline=""))
+        header = tuple(reader.fieldnames or ())
         rows = list(reader)
     except csv.Error:
         raise LabelError("LABEL_CSV_INVALID") from None
+    if header != HUMAN_COLUMNS:
+        raise LabelError("LABEL_CSV_INVALID", row=1)
     for number, row in enumerate(rows, start=2):
         if None in row or any(value is None for value in row.values()):
             raise LabelError("LABEL_CSV_INVALID", row=number)

@@ -170,3 +170,15 @@ def test_a_deeply_nested_json_document_rejects_the_file(tmp_path: Path) -> None:
     with pytest.raises(LabelError) as excinfo:
         load_advisories(directory, [IDENTITY])
     assert excinfo.value.code == "ADVISORY_JSON_INVALID"
+
+
+def test_an_integer_literal_beyond_the_digit_limit_rejects_the_file(tmp_path: Path) -> None:
+    # json.loads raises builtins.ValueError (not JSONDecodeError) on >4300-digit integers.
+    directory = tmp_path / "advisories"
+    directory.mkdir()
+    (directory / "MAL-2026-1.json").write_text(
+        '{"id": "MAL-2026-1", "affected": [], "n": ' + "9" * 5000 + "}", encoding="utf-8"
+    )
+    with pytest.raises(LabelError) as excinfo:
+        load_advisories(directory, [IDENTITY])
+    assert excinfo.value.code == "ADVISORY_JSON_INVALID"

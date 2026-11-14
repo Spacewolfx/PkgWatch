@@ -78,3 +78,22 @@ def test_an_oversized_csv_field_rejects_the_whole_file(tmp_path: Path) -> None:
     with pytest.raises(LabelError) as excinfo:
         load_human_labels(_write(tmp_path, row))
     assert excinfo.value.code == "LABEL_CSV_INVALID"
+
+
+def test_an_oversized_header_field_rejects_the_whole_file(tmp_path: Path) -> None:
+    # Reading fieldnames itself raises csv.Error when a header cell exceeds the field limit.
+    directory = tmp_path / "human"
+    directory.mkdir()
+    header = "ecosystem," + "x" * (csv.field_size_limit() + 1)
+    (directory / "a.csv").write_text(header + "\n", encoding="utf-8")
+    with pytest.raises(LabelError) as excinfo:
+        load_human_labels(directory)
+    assert excinfo.value.code == "LABEL_CSV_INVALID"
+
+
+def test_a_note_with_an_exotic_newline_is_not_cut_into_extra_records(tmp_path: Path) -> None:
+    # str.splitlines() treats \v as a record break before csv sees the quoted cell.
+    row = 'npm,demo-pkg,1.0.0,1.1.0,benign,halley,2026-11-14,1.0,"line one\x0bline two"'
+    labels = load_human_labels(_write(tmp_path, row))
+    assert len(labels) == 1
+    assert labels[0].label is Label.BENIGN

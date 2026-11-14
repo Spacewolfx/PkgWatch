@@ -93,7 +93,9 @@ def _read(path: Path) -> tuple[dict[str, Any], str]:
     try:
         raw = path.read_bytes()
         document = json.loads(raw.decode("utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, RecursionError):
+    except (OSError, UnicodeDecodeError, ValueError, RecursionError):
+        # ValueError covers json.JSONDecodeError and the >4300-digit int() limit that a
+        # hostile document can trip while decoding an integer literal.
         raise LabelError("ADVISORY_JSON_INVALID") from None
     if (
         not isinstance(document, dict)

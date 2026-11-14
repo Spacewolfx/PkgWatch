@@ -117,6 +117,23 @@ class NewPackageAnalysis:
 
 
 @dataclass(frozen=True)
+class ActiveFindings:
+    """Everything the report and the dataset seam need from one rule run.
+
+    ``ctx`` is the context *after* manifest parse errors were added, and ``all_findings``
+    is pre-ignore and pre-baseline: the dataset must not encode an operator's suppressions.
+    """
+
+    ctx: DiffContext
+    all_findings: tuple[Finding, ...]
+    scored: tuple[Finding, ...]
+    informational: tuple[tuple[str, int], ...]
+    result: ScoreResult
+    ignored: tuple[tuple[str, int], ...]
+    baselined: tuple[Finding, ...]
+
+
+@dataclass(frozen=True)
 class LockRunResult:
     plan: LockPlan
     pairs: tuple[PairAnalysis, ...]
@@ -299,7 +316,7 @@ def _analyse_pair(
                 metadata_after=fetched.new.metadata,
             )
             try:
-                active, _metadata, result, ignored_counts, baselined_findings = _active_findings(
+                analysed = _active_findings(
                     ctx,
                     ignored_set,
                     config=config,
@@ -312,14 +329,14 @@ def _analyse_pair(
                 name=pair.name,
                 old_version=pair.old_version,
                 new_version=pair.new_version,
-                findings=active,
-                score=result.score,
-                boosts=result.boosts,
+                findings=analysed.scored,
+                score=analysed.result.score,
+                boosts=analysed.result.boosts,
                 digests=(fetched.old.digest_method, fetched.new.digest_method),
                 files=_counts(ctx.changes),
-                ignored=ignored_counts,
-                baselined=len(baselined_findings),
-                acknowledged=active + baselined_findings,
+                ignored=analysed.ignored,
+                baselined=len(analysed.baselined),
+                acknowledged=analysed.scored + analysed.baselined,
             )
     except FetchError as exc:
         return _failed(pair, exc.code.value)
@@ -355,18 +372,13 @@ def _active_findings(
     informational_families: frozenset[RuleFamily] = frozenset(),
     baseline_keys: frozenset[BaselineKey] = frozenset(),
     experimental: bool = False,
-) -> tuple[
-    tuple[Finding, ...],
-    tuple[tuple[str, int], ...],
-    ScoreResult,
-    tuple[tuple[str, int], ...],
-    tuple[Finding, ...],
-]:
+) -> ActiveFindings:
     """The one rule/score path shared by changed pairs and no-baseline new packages.
 
-    Returns the scored findings, the per-rule counts of ``informational_families``
-    findings, the score of the scored findings, the per-rule ignored counts, and the
-    findings the baseline hid. Informational families still run, but are neither
+    Returns an :class:`ActiveFindings` carrying the augmented context, every finding,
+    the scored findings, the per-rule counts of ``informational_families`` findings,
+    the score of the scored findings, the per-rule ignored counts, and the findings
+    the baseline hid. Informational families still run, but are neither
     reported nor scored: for a brand-new package there is no baseline, so a family-4
     "change" against the empty tree describes what the package carries, not what
     changed (L2d). A ``baseline_keys`` match (SPEC §9.1 decision 16) hides a finding
@@ -411,12 +423,14 @@ def _active_findings(
         families=families,
         rule_set_version=rule_set_version(),
     )
-    return (
-        scored_findings,
-        _rule_counts(informational),
-        result,
-        _ignored_counts(findings, ignored_set),
-        tuple(baselined),
+    return ActiveFindings(
+        ctx=ctx,
+        all_findings=tuple(findings),
+        scored=scored_findings,
+        informational=_rule_counts(informational),
+        result=result,
+        ignored=_ignored_counts(findings, ignored_set),
+        baselined=tuple(baselined),
     )
 
 
@@ -490,30 +504,28 @@ def _analyse_new_package(
                 metadata_after=artifact.metadata,
             )
             try:
-                active, informational, result, ignored_counts, baselined_findings = (
-                    _active_findings(
-                        ctx,
-                        ignored_set,
-                        config=config,
-                        informational_families=frozenset({RuleFamily.METADATA}),
-                        baseline_keys=baseline_keys,
-                        experimental=experimental,
-                    )
+                analysed = _active_findings(
+                    ctx,
+                    ignored_set,
+                    config=config,
+                    informational_families=frozenset({RuleFamily.METADATA}),
+                    baseline_keys=baseline_keys,
+                    experimental=experimental,
                 )
             except _IncompleteAnalysis as exc:
                 return _failed_new(package, ANALYSIS_INCOMPLETE, parse_problems=exc.parse_problems)
             return NewPackageAnalysis(
                 name=package.name,
                 version=package.version,
-                findings=active,
-                score=result.score,
-                boosts=result.boosts,
+                findings=analysed.scored,
+                score=analysed.result.score,
+                boosts=analysed.result.boosts,
                 digest=artifact.digest_method,
                 files=_counts(ctx.changes),
-                informational=informational,
-                ignored=ignored_counts,
-                baselined=len(baselined_findings),
-                acknowledged=active + baselined_findings,
+                informational=analysed.informational,
+                ignored=analysed.ignored,
+                baselined=len(analysed.baselined),
+                acknowledged=analysed.scored + analysed.baselined,
             )
     except FetchError as exc:
         return _failed_new(package, exc.code.value)

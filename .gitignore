@@ -10,3 +10,4 @@ dist/
 # Local-only AI process artifacts: kept on disk, never published.
 özet.md
 docs/GATES-*.txt
+docs/superpowers/

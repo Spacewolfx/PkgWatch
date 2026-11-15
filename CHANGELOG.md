@@ -8,9 +8,10 @@ of malicious behaviour.
 ## 0.3.0 — 2026-11-15
 
 Turns the pairs `compare` and `lock` already analyse into a sound, reproducible,
-label-joined dataset, and adds a report-only symbol-level diff for Python files. Static
-analysis only; no package content is executed and no model is trained. Detection quality
-remains unmeasured.
+label-joined dataset, and adds a report-only symbol-level diff for Python files. The
+unfinished crates.io support and the offline model layer are removed, so this release
+covers npm and PyPI only. Static analysis only; no package content is executed. Detection
+quality remains unmeasured.
 
 ### Added — symbol diff
 
@@ -64,6 +65,21 @@ remains unmeasured.
   tool error.
 - `LabelSource.NONE`, a closed categorical feature vocabulary, and `AnalysisRecord`; `unknown`
   is now never metric-eligible in any split.
+
+### Changed
+
+- Version is `0.3.0`, and the default `User-Agent` plus the README config example follow it.
+- Compare JSON is `schema_version` 3: every report now carries `ast_changes` and
+  `ast_changes_omitted`, so consumers pinned to 2 must accept the new keys. Lock and store
+  schemas are unchanged.
+
+### Removed
+
+- **crates.io support.** The fetcher, `crates:` route, tests and the `[fetch]` contact field
+  were never finished and shipped no rules, so they are gone rather than left half-built.
+- **The offline model layer.** `model/`, the `[model]` config section and the planned
+  `train`/`eval`/`explain` entry points are removed: with `data/labels/` empty a model
+  could not be measured, so it is not part of this release.
 
 ### Notes
 

@@ -215,8 +215,10 @@ def test_json_shape_is_stable(tmp_path: Path, capsys: pytest.CaptureFixture[str]
         "measured",
         "warnings",
         "disclaimer",
+        "ast_changes",
+        "ast_changes_omitted",
     }
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] == 3
     assert payload["measured"] is False
     assert len(payload["rule_set_version"]) == 12
     assert set(payload["files"]) == {"added", "removed", "modified"}
@@ -1023,7 +1025,7 @@ def test_record_dir_writes_one_record_without_changing_the_report(
     code, out, err = _run(capsys, registry, "--json", "--record-dir", str(records))
     assert code == 0, err
     report = json.loads(out)
-    assert report["schema_version"] == 2
+    assert report["schema_version"] == 3
 
     again, out2, _ = _run(capsys, registry, "--json")
     assert again == 0

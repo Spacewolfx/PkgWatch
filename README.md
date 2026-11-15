@@ -277,13 +277,13 @@ JSON mode carries `"measured": false` instead.
 
 ## JSON schema
 
-Compare JSON `schema_version` is `2` (the store schema remains `1`). Keys are stable; the
-report is printed with sorted keys. Version 2 makes nested registry values real decoded
-JSON rather than JSON-encoded strings.
+Compare JSON `schema_version` is `3` (the store schema remains `1`). Keys are stable; the
+report is printed with sorted keys. Version 2 made nested registry values real decoded
+JSON rather than JSON-encoded strings; version 3 adds the `ast_changes` block.
 
 | Key | Type | Meaning |
 |---|---|---|
-| `schema_version` | int | `2` |
+| `schema_version` | int | `3` |
 | `ecosystem` | str | `"npm"` |
 | `package`, `old_version`, `new_version` | str | coordinates |
 | `files` | object | `{added, removed, modified}` counts |
@@ -297,6 +297,8 @@ JSON rather than JSON-encoded strings.
 | `digests` | object | `{old, new}`: `integrity` or `shasum` |
 | `explanations` | object | `{rule_id: {why_it_matters, common_benign_causes}}`; empty without `--explain` |
 | `ignored_rules` | array | `{rule_id, findings}` |
+| `ast_changes` | array | `{path, side, kind, symbol, line}` for changed `.py` files; rule and score input unchanged |
+| `ast_changes_omitted` | int | symbol changes beyond the report cap |
 | `rule_set_version` | str | 12 hex characters |
 | `measured` | bool | always `false` |
 | `disclaimer` | str | the fixed disclaimer text |
@@ -660,7 +662,7 @@ catalog: [docs/dataset.md](docs/dataset.md).
 **No labels ship yet.** `data/labels/` is empty, so every export today is `unknown` or
 `rule_derived`; `unknown` is never metric-eligible and `rule_derived` is excluded from
 `val`/`test` metrics, so no classification metric may be reported on an export from this
-repository as it stands. M5 (the model layer) remains not built.
+repository as it stands.
 
 ## Open assumptions (TODO)
 

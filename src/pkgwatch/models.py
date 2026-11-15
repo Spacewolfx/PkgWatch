@@ -184,6 +184,9 @@ class ParseErrorKind(StrEnum):
     DIFF = "diff"
     # SPEC §4.5.1: a malformed root package.json is a parse problem, never a crash.
     MANIFEST = "manifest"
+    # An AST-level view that could not be built (invalid module or over budget). The line-
+    # level differ still ran; this row states that the symbol block is incomplete.
+    SYNTAX = "syntax"
 
 
 class SandboxLimits(BaseModel):
@@ -654,6 +657,54 @@ class ParseError(BaseModel):
         return value[: EVIDENCE_MAX_CHARS - 1] + "…"
 
 
+class AstSide(StrEnum):
+    OLD = "old"
+    NEW = "new"
+
+
+class AstChangeKind(StrEnum):
+    FUNCTION_ADDED = "function_added"
+    FUNCTION_REMOVED = "function_removed"
+    FUNCTION_CHANGED = "function_changed"
+    CLASS_ADDED = "class_added"
+    CLASS_REMOVED = "class_removed"
+    IMPORT_ADDED = "import_added"
+    IMPORT_REMOVED = "import_removed"
+
+
+class AstLimits(BaseModel):
+    """M4-B bounds for the Python AST differ (SPEC §4.6). Initial untuned values.
+
+    A module over either budget is skipped as a whole and recorded, never half-parsed.
+    """
+
+    model_config = _STRICT
+
+    max_nodes: int = Field(default=50_000, gt=0)
+    max_depth: int = Field(default=64, gt=0)
+    max_changes: int = Field(default=2_000, gt=0)
+
+
+class AstChange(BaseModel):
+    """One symbol-level change. No source text: only a qualified name and a line."""
+
+    model_config = _STRICT
+
+    path: str = Field(min_length=1, max_length=1024)
+    side: AstSide
+    kind: AstChangeKind
+    symbol: str = Field(min_length=1, max_length=200)
+    line: int = Field(ge=1)
+
+    @field_validator("symbol", mode="before")
+    @classmethod
+    def _clip_symbol(cls, value: object) -> object:
+        """Clip at the model boundary so no caller can emit a longer name."""
+        if isinstance(value, str) and len(value) > 200:
+            return value[:199] + "\u2026"
+        return value
+
+
 class DiffContext(BaseModel):
     """Everything a rule is allowed to see (SPEC §4.2). Built by ``diff/``, read by ``rules/``."""
 
@@ -672,6 +723,14 @@ class DiffContext(BaseModel):
     parse_errors: tuple[ParseError, ...] = ()
     limits: SandboxLimits
     obfuscation: ObfuscationLimits = Field(default_factory=ObfuscationLimits)
+    # Additive (M4-B): symbol-level changes on changed ``.py`` paths. Rules, features and
+    # the score never read this field; it is report surface only.
+    ast_changes: tuple[AstChange, ...] = ()
+    ast_changes_omitted: int = Field(default=0, ge=0)
+    # AST-only failures. Kept out of ``parse_errors`` on purpose: that tuple is the rule
+    # engine's "analysis is partial" signal, and a module the symbol differ cannot read
+    # does not reduce what the line-level rules saw.
+    ast_errors: tuple[ParseError, ...] = ()
     views_incomplete: bool = False
 
     @model_validator(mode="after")

@@ -23,9 +23,12 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from pkgwatch.diff.ast import INPUT_TRUNCATED, ModuleSymbols, diff_modules, parse_module
 from pkgwatch.models import (
     DIFF_LINE_MAX_CHARS,
     EVIDENCE_MAX_CHARS,
+    AstChange,
+    AstLimits,
     ChangeType,
     DiffContext,
     DiffLine,
@@ -101,8 +104,13 @@ def build_diff_context(
     metadata_before: Mapping[str, Any] | None = None,
     metadata_after: Mapping[str, Any] | None = None,
     obfuscation: ObfuscationLimits | None = None,
+    ast_limits: AstLimits | None = None,
 ) -> DiffContext:
-    """Compare two extracted trees into the one object a rule is allowed to read."""
+    """Compare two extracted trees into the one object a rule is allowed to read.
+
+    ``ast_limits`` is opt-in: with ``None`` (existing callers, ``lock``) no module is
+    parsed and ``ast_changes`` stays empty, so nothing about the analysis changes.
+    """
     if ecosystem is Ecosystem.PYPI:
         # An sdist unpacks under a single {name}-{version}/ root that differs per
         # version; re-root both trees so the same inner path compares to itself.
@@ -140,6 +148,17 @@ def build_diff_context(
                 if view_new is not None:
                     files_new[path] = view_new
 
+    # ``views_incomplete`` describes the *line-level* views only: an AST failure does not
+    # reduce what the rules can read, so it must not change the score (SPEC §4.6).
+    views_incomplete = bool(parse_errors)
+    ast_changes: tuple[AstChange, ...] = ()
+    ast_changes_omitted = 0
+    ast_errors: tuple[ParseError, ...] = ()
+    if ast_limits is not None:
+        ast_changes, ast_changes_omitted, ast_errors = _symbol_changes(
+            changes, files_old, files_new, ast_limits
+        )
+
     return DiffContext(
         ecosystem=ecosystem,
         package_name=package_name,
@@ -154,8 +173,71 @@ def build_diff_context(
         parse_errors=tuple(parse_errors),
         limits=limits,
         obfuscation=obfuscation or ObfuscationLimits(),
-        views_incomplete=bool(parse_errors),
+        ast_changes=ast_changes,
+        ast_changes_omitted=ast_changes_omitted,
+        ast_errors=ast_errors,
+        views_incomplete=views_incomplete,
     )
+
+
+def _symbol_changes(
+    changes: Sequence[FileChange],
+    files_old: Mapping[str, FileView],
+    files_new: Mapping[str, FileView],
+    limits: AstLimits,
+) -> tuple[tuple[AstChange, ...], int, tuple[ParseError, ...]]:
+    """Python symbol changes for changed paths, bounded and deterministic.
+
+    Only files that already have a line-level change are considered, and only when both
+    sides are complete text views; a truncated module is never parsed (a cut module can
+    parse into a plausible but wrong tree) and is recorded instead.
+    """
+    out: list[AstChange] = []
+    errors: list[ParseError] = []
+    omitted = 0
+    for change in changes:
+        path = change.path_new or change.path_old
+        if path is None or not change.is_text:
+            continue
+        if PurePosixPath(path).suffix.lower() != ".py":
+            continue
+        if change.change_type not in {ChangeType.ADDED, ChangeType.REMOVED, ChangeType.MODIFIED}:
+            continue
+        old_view = files_old.get(path)
+        new_view = files_new.get(path)
+        if any(view.truncated for view in (old_view, new_view) if view is not None):
+            errors.append(ParseError(path=path, kind=ParseErrorKind.SYNTAX, detail=INPUT_TRUNCATED))
+            continue
+        old_symbols = ModuleSymbols()
+        new_symbols = ModuleSymbols()
+        failed = False
+        for view, is_old in ((old_view, True), (new_view, False)):
+            if view is None:
+                continue
+            parsed = parse_module(path, view.content, limits)
+            if not parsed.ok:
+                errors.append(
+                    ParseError(
+                        path=path,
+                        kind=ParseErrorKind.SYNTAX,
+                        detail=parsed.detail or "SOURCE_SYNTAX_ERROR",
+                    )
+                )
+                failed = True
+                break
+            if parsed.symbols is not None:
+                if is_old:
+                    old_symbols = parsed.symbols
+                else:
+                    new_symbols = parsed.symbols
+        if failed:
+            continue
+        file_changes, file_omitted = diff_modules(path, old_symbols, new_symbols, limits=limits)
+        out.extend(file_changes)
+        omitted += file_omitted
+    out.sort(key=lambda item: (item.path, item.line, item.kind.value, item.symbol))
+    kept = out[: limits.max_changes]
+    return tuple(kept), omitted + len(out) - len(kept), tuple(errors)
 
 
 def _by_path(entries: Sequence[ManifestEntry]) -> dict[str, ManifestEntry]:

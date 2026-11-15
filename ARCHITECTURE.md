@@ -48,7 +48,6 @@ Two commitments shape the whole design:
 | `src/pkgwatch/store/` | Repository | The only module that touches SQL | built for `releases`/`watchlist`/`runs`; unused by `compare` and `lock` |
 | `src/pkgwatch/dataset/` | Exporter | Record seam, label join, salted split, JSONL + manifest, invariant validator | built (M3) |
 | `src/pkgwatch/labeling/` | Label sources | Human CSV + local OSV advisory JSON, precedence and conflicts | built (M3) |
-| `src/pkgwatch/model/` | Offline layer | Train / eval / explain; never imported by ingestion | **empty package** — M5, not built |
 | `src/pkgwatch/cli.py` | Entry point | argparse wrapper: `compare`, `lock`, `rules`, `export-dataset`, `validate-dataset`, `config-*`, `version`; text/JSON/Markdown/SARIF output | built |
 
 Dependency direction is strictly left-to-right through this list. `models.py` and
@@ -141,7 +140,6 @@ The monitored-package pipeline this document was written for. It is the target s
        labeling/ (human CSV + local OSV) ──▶ dataset/export.py ──▶ data/dataset/*.jsonl
                                           │
                                           ▼ (offline, separate command, separate env)
-                                    model/ train · eval · explain   (M5)
 ```
 
 The double rule is a real architectural line, enforced by an import test (§5). The
@@ -363,7 +361,6 @@ below is each checkpoint and whether it is actually proven today.
 | **M2** — `DiffContext → Finding → ScoreResult` | The contract end-to-end on fixtures: rules see one object, the score is a pure deterministic function of findings, monotonicity holds, output is byte-stable. | **proven** on the on-demand path. `store/` is built and tested, but no shipped command writes a report to it — the "→ store" half of this arrow is a library, not a pipeline. |
 | **M3** — dataset soundness | Splits leak nothing, features carry no source text, the export validates against `DatasetRecord`, `rule_derived` labels are excluded from metrics. | **proven on the on-demand path.** `compare`/`lock --record-dir` write `AnalysisRecord` files; `export-dataset` joins labels, assigns the salted split and writes JSONL plus a manifest; `validate-dataset` re-checks every invariant. Tests assert the 69-key catalog, no source text in features, one split per package, and that `unknown` and holdout `rule_derived` are never metric-eligible. `data/labels/` ships empty, so no measured metric exists yet. |
 | **M4** — widened coverage | PyPI, crates.io, AST-level diff, rule families 3–4. | **partial.** PyPI `compare` ships (6 `PYPI_*` rules, sdist re-rooting, per-version registry metadata). Families 3–4 ship but are gated: 6 rules (`BASE64_BLOB_PRESENT`, `HEX_ESCAPE_DENSITY`, `HIGH_ENTROPY_STRINGS`, `DEPENDENCY_ADDED`, `PYPI_DEPENDENCY_ADDED`, `REPOSITORY_URL_CHANGED`) are off unless `--experimental`, and their weights are untuned. `crates.io` and `diff/ast.py` are not built; file-level diff is the only differ. |
-| **M5** — the model layer | A model trained on the M3 export, in a separate environment, whose output can never reach a `ScoreResult`. | **not built.** `model/` is an empty package. M3 now exists, but every export is `unknown` or `rule_derived` until human labels ship, so a trained model would still be unmeasurable. |
 
 Two things shipped that this milestone plan did not anticipate:
 
@@ -376,4 +373,4 @@ Two things shipped that this milestone plan did not anticipate:
 
 The honest summary: the security-critical half of the design is built and tested, and the
 data path is built while the model is not. Anyone extending pkgwatch should treat §2.2's
-batch pipeline as the proposal it is, and should not claim M5 progress from the code in §2.1.
+batch pipeline as the proposal it is, and should not claim progress beyond M4 from the code in §2.1.

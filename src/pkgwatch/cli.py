@@ -64,6 +64,7 @@ from pkgwatch.lock.report import format_plan_text as format_lock_plan_text
 from pkgwatch.lock.report import format_text as format_lock_text
 from pkgwatch.lockfile import LockfileError, LockPlan
 from pkgwatch.models import (
+    AstChange,
     ChangeType,
     Ecosystem,
     ExtractionResult,
@@ -114,14 +115,15 @@ RECORD_WRITE_FAILED = "RECORD_WRITE_FAILED"
 UNKNOWN_RULE_ID = "UNKNOWN_RULE_ID"
 
 CHANGED_FILES_LIMIT = 50
+SYMBOL_CHANGES_LIMIT = 20
 NOT_AVAILABLE = "(not available)"
 
 # Version of the compare JSON report only. models.SCHEMA_VERSION versions the store and
-# stays at 1; v0.2 L0 changed registry_metadata_changes to typed JSON, hence 2. The
-# key set is ecosystem-conditional (npm: package_json_changes + registry_metadata_
-# changes; PyPI: pypi_metadata_changes), so schema_version stays 2 and `ecosystem`
-# tells the reader which block to expect.
-COMPARE_JSON_SCHEMA_VERSION = 2
+# stays at 1; v0.2 L0 changed registry_metadata_changes to typed JSON, hence 2. M4 adds
+# the ecosystem-independent ``ast_changes`` block (with its ``ast_changes_omitted``
+# counter), which is a new key in every report, hence 3. The metadata blocks stay
+# ecosystem-conditional and `ecosystem` tells the reader which one to expect.
+COMPARE_JSON_SCHEMA_VERSION = 3
 
 # Standard SARIF v2.1.0 schema URI for static analysis integration (GitHub/GitLab).
 SARIF_SCHEMA_URI = (
@@ -255,6 +257,14 @@ class IgnoredRuleOut(TypedDict):
     findings: int
 
 
+class AstChangeOut(TypedDict):
+    path: str
+    side: str
+    kind: str
+    symbol: str
+    line: int
+
+
 class CompareReport(TypedDict):
     schema_version: int
     ecosystem: str
@@ -268,6 +278,10 @@ class CompareReport(TypedDict):
     digests: dict[str, str]
     changed_files: list[ChangedFileOut]
     changed_files_omitted: int
+    # Ecosystem-independent (M4-B): Python symbol changes on changed paths, sorted and
+    # capped at ``[ast].max_changes``. No source text, no rule consumes it.
+    ast_changes: list[AstChangeOut]
+    ast_changes_omitted: int
     # Ecosystem-conditional blocks: npm carries the package.json and registry-metadata
     # views, PyPI the pypi_metadata_changes view. Exactly one set is present.
     package_json_changes: NotRequired[PackageJsonChangesOut]
@@ -1049,9 +1063,10 @@ def _emit_output(
 def _route(spec: str) -> tuple[Ecosystem, str, str]:
     """Resolve one ``compare`` spec to its ecosystem, name and exact version.
 
-    ``pypi:`` routes to the PyPI parser; everything else stays on the npm path, so npm
-    behaviour is unchanged. Each parser validates the name and version before any URL
-    is built, so a bad spec raises a stable ``FetchError`` here, never at the network.
+    ``pypi:`` routes to its parser; everything else stays on the npm
+    path, so npm behaviour is unchanged. Each parser validates the name and version before
+    any URL is built, so a bad spec raises a stable ``FetchError`` here, never at the
+    network.
     """
     if spec.startswith("pypi:"):
         name, version = pypi_fetch.parse_spec(spec)
@@ -1136,6 +1151,7 @@ def _compare(
             obfuscation=config.obfuscation,
             metadata_before=pair.old.metadata,
             metadata_after=pair.new.metadata,
+            ast_limits=config.ast,
         )
 
         manifest_changes = diff_root_manifests(ctx)
@@ -1199,6 +1215,8 @@ def _compare(
             changed_files=shown,
             omitted=len(changed) - len(shown),
             manifest_changes=manifest_changes,
+            ast_changes=ctx.ast_changes,
+            ast_changes_omitted=ctx.ast_changes_omitted,
             # Materialize: the callee may iterate more than once.
             explanations=(
                 explanations_for(tuple(item.rule_id for item in display)) if explain else {}
@@ -1343,6 +1361,8 @@ def _report(
     changed_files: list[ChangedFileOut],
     omitted: int,
     manifest_changes: ManifestChanges,
+    ast_changes: Sequence[AstChange],
+    ast_changes_omitted: int,
     explanations: Mapping[str, tuple[str, str]],
     ignored_rules: list[IgnoredRuleOut],
 ) -> CompareReport:
@@ -1370,6 +1390,17 @@ def _report(
         digests={"old": pair.old.digest_method, "new": pair.new.digest_method},
         changed_files=changed_files,
         changed_files_omitted=omitted,
+        ast_changes=[
+            AstChangeOut(
+                path=item.path,
+                side=item.side.value,
+                kind=item.kind.value,
+                symbol=item.symbol,
+                line=item.line,
+            )
+            for item in ast_changes
+        ],
+        ast_changes_omitted=ast_changes_omitted,
         explanations={
             rule_id: ExplanationOut(why_it_matters=copy[0], common_benign_causes=copy[1])
             for rule_id, copy in sorted(explanations.items())
@@ -1382,7 +1413,7 @@ def _report(
     )
     if ecosystem is Ecosystem.PYPI:
         report["pypi_metadata_changes"] = _pypi_metadata_changes(pair)
-    else:
+    elif ecosystem is Ecosystem.NPM:
         report["package_json_changes"] = _package_json_changes(manifest_changes)
         report["registry_metadata_changes"] = _registry_metadata_changes(pair)
     return report
@@ -1587,11 +1618,24 @@ def _format_text(report: CompareReport) -> str:
     if report["changed_files_omitted"]:
         lines.append(f"  ... {report['changed_files_omitted']} more")
 
+    if report["ast_changes"] or report["ast_changes_omitted"]:
+        lines.append("symbol changes:")
+        for symbol_change in report["ast_changes"][:SYMBOL_CHANGES_LIMIT]:
+            lines.append(
+                f"  {symbol_change['kind']} {symbol_change['side']} "
+                f"{_one_line(symbol_change['path'])}:{symbol_change['line']} "
+                f"{_one_line(symbol_change['symbol'])}"
+            )
+        hidden = len(report["ast_changes"]) - SYMBOL_CHANGES_LIMIT
+        total = max(0, hidden) + report["ast_changes_omitted"]
+        if total:
+            lines.append(f"  ... {total} more")
+
     if report["ecosystem"] == "pypi":
         lines.append("pypi metadata changes:")
         for field, sides in report["pypi_metadata_changes"]["fields"].items():
             lines.append(f"  {field}: {_side_text(sides['old'])} -> {_side_text(sides['new'])}")
-    else:
+    elif report["ecosystem"] == "npm":
         lines.append("package.json changes:")
         for name, section in report["package_json_changes"]["sections"].items():
             added = ",".join(section["added"]) or "-"
@@ -1678,13 +1722,34 @@ def _format_compare_markdown(report: CompareReport) -> str:
             lines.append(f"  - *Why it matters:* {_one_line(copy['why_it_matters'])}")
             lines.append(f"  - *Common benign causes:* {_one_line(copy['common_benign_causes'])}")
 
+    if report["ast_changes"]:
+        lines.extend(
+            [
+                "",
+                "### Symbol Changes",
+                "",
+                "| Side | Kind | Location | Symbol |",
+                "|---|---|---|---|",
+            ]
+        )
+        for symbol_change in report["ast_changes"][:SYMBOL_CHANGES_LIMIT]:
+            path = _md_escape(symbol_change["path"])
+            lines.append(
+                f"| {symbol_change['side']} | `{_md_escape(symbol_change['kind'])}` | "
+                f"`{path}:{symbol_change['line']}` | `{_md_escape(symbol_change['symbol'])}` |"
+            )
+        hidden = len(report["ast_changes"]) - SYMBOL_CHANGES_LIMIT
+        total = max(0, hidden) + report["ast_changes_omitted"]
+        if total:
+            lines.append(f"\n_{total} more symbol changes omitted._")
+
     if report["ecosystem"] == "pypi":
         lines.extend(["", "### PyPI Metadata", ""])
         for field, sides in report["pypi_metadata_changes"]["fields"].items():
             old = _md_escape(_side_text(sides["old"]))
             new = _md_escape(_side_text(sides["new"]))
             lines.append(f"- **{_md_escape(field)}:** {old} -> {new}")
-    else:
+    elif report["ecosystem"] == "npm":
         lines.extend(["", "### Package.json Changes", ""])
         for name, section in report["package_json_changes"]["sections"].items():
             added = ", ".join(section["added"]) or "-"

@@ -1,6 +1,6 @@
 """Ecosystem version parsing and precedence (SPEC §6.4).
 
-One total order per ecosystem over exact version strings: npm/crates-style semver
+One total order per ecosystem over exact version strings: npm-style semver
 (``MAJOR.MINOR.PATCH[-prerelease][+build]``) and PyPI's PEP 440. Build metadata is
 accepted and ignored for npm precedence — a partial order, so two versions can compare
 equal without being the same text. Own code on purpose: SPEC §6.4 forbids a third-party

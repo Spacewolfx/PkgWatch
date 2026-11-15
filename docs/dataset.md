@@ -1,7 +1,7 @@
 # Dataset path — record → label → split → export → validate
 
 M3 turns pairs that `compare` and `lock` already analyse into a sound, reproducible,
-label-joined dataset. It does **not** train a model (M5) and it adds **no** store migration:
+label-joined dataset. It trains nothing and it adds **no** store migration:
 the persisted unit is a JSON record file, not a database row.
 
 Everything here is static analysis. No package content is executed, imported, installed or

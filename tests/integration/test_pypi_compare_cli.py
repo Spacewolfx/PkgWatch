@@ -68,7 +68,7 @@ def test_benign_sdist_pair_exits_zero_with_pypi_ecosystem(
     assert code == 0
     assert err == ""
     assert payload["ecosystem"] == "pypi"
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] == 3
     assert payload["package"] == "demo-pkg"
     assert payload["old_version"] == OLD_VERSION
     assert payload["new_version"] == NEW_VERSION
@@ -203,6 +203,8 @@ def test_json_shape_is_stable_for_pypi(tmp_path: Path, capsys: pytest.CaptureFix
         "measured",
         "warnings",
         "disclaimer",
+        "ast_changes",
+        "ast_changes_omitted",
     }
     # The JSON schema is ecosystem-aware: PyPI carries pypi_metadata_changes and does
     # not carry the npm-specific package_json_changes / registry_metadata_changes.

@@ -52,7 +52,7 @@ trained. Detection quality remains unmeasured.
 ### Notes
 
 - `data/labels/` ships empty, so every export today is `unknown` or `rule_derived` and no
-  classification metric may be reported on it. M5 (the model layer) is still not built.
+  classification metric may be reported on it.
 - M3 adds **no** store migration: `user_version` stays 1 and the manifest records
   `sqlite_user_version: null`. Documentation: `docs/dataset.md`.
 

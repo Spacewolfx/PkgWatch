@@ -1,9 +1,9 @@
 # pkgwatch — SPEC
 
-Version 0.2.0 · compare schema_version 2 · lock schema_version 4 · store schema_version 1 ·
+Version 0.2.0 · compare schema_version 3 · lock schema_version 4 · store schema_version 1 ·
 weights_version `w1` · rule_set_version computed from the registry (§5)
 
-Normative for milestones M1–M5. Where this document says *verified*, it means probed from
+Normative for milestones M1–M4. Where this document says *verified*, it means probed from
 this machine on 2026-11-05; where it says *TODO*, the behavior is specified but the
 coordinate is not yet confirmed and must not be assumed by a later implementer.
 
@@ -530,7 +530,7 @@ capture and `run_id`.
 `fetch --release eco/name/version` · `check <eco> <name> <v_old> <v_new> [--offline-dir]`
 (the offline pair-analysis used by integration tests) · `score --release …` ·
 `export-dataset --records DIR [--labels DIR] [--out DIR] [--json]` ·
-`validate-dataset --path FILE [--json]` · `train|eval|explain` (M5, own entry) ·
+`validate-dataset --path FILE [--json]` ·
 `compare npm:<name>@<old> npm:<name>@<new> [--record-dir DIR]` ·
 `compare pypi:<name>@<old> pypi:<name>@<new> [--record-dir DIR]`
 (§9.2, PyPI JSON API) · `lock --old OLD_LOCK --new NEW_LOCK [--record-dir DIR]`
@@ -702,7 +702,7 @@ order; unbalanced or unparseable sets stay unpaired (`MULTIPLE_VERSIONS`).
    unchanged, so `PYPI_DEPENDENCY_ADDED` is off by default and surfaces under
    `--experimental`, exactly like npm's `DEPENDENCY_ADDED`. §7's "no PyPI finding is
    experimental in v1" is read as "no new gating concept". The `compare` JSON
-   `schema_version` stays 2; `ecosystem` reads `"pypi"`, the npm-only blocks
+   `schema_version` is 3; `ecosystem` reads `"pypi"`, the npm-only blocks
    (`package_json_changes`, `registry_metadata_changes`) are omitted, and
    `pypi_metadata_changes` carries the per-version registry-metadata diff.
 
@@ -729,7 +729,6 @@ stays `w1`.
 
 | # | Decision |
 |---|---|
-| O1 | **M5 is deferred.** No labels ship, so a model trained today would be unmeasurable, and `numpy`/`scikit-learn` are new unapproved dependencies. |
 | O2 | **Record files, not SQL.** `compare`/`lock --record-dir` write one JSON per pair; M3 adds **no** store migration and `user_version` stays 1. |
 | O3 | **`file_extension` is never a feature.** It is an unbounded attacker-controlled vocabulary. |
 | O4 | **`unknown` is never metric-eligible**, in every split and from every source. |

@@ -12,7 +12,13 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from pkgwatch.models import Ecosystem, ObfuscationLimits, SandboxLimits, Severity
+from pkgwatch.models import (
+    AstLimits,
+    Ecosystem,
+    ObfuscationLimits,
+    SandboxLimits,
+    Severity,
+)
 
 _STRICT = ConfigDict(extra="forbid", frozen=True)
 
@@ -135,9 +141,8 @@ class FetchConfig(BaseModel):
     max_tarball_bytes: int = Field(default=64 * 1024 * 1024, gt=0)
     request_timeout_seconds: float = Field(default=15.0, gt=0.0)
     max_redirects: int = Field(default=5, ge=0, le=10)
-    # TODO(v0.1): SPEC §3 mentions a contact string in the crates.io User-Agent. The npm
-    # registry's User-Agent policy and rate limits were not verified offline; no contact is
-    # claimed here. Revisit before the first live-registry run.
+    # The registry's User-Agent policy and rate limits were not verified offline; no contact
+    # is claimed here, and this value is sent as is.
     user_agent: str = Field(default="pkgwatch/0.2.0", min_length=1, max_length=128)
     # ``None`` means the operating system's user cache directory, never the repository.
     cache_dir: Path | None = None
@@ -193,6 +198,8 @@ class Config(BaseModel):
     lock: LockConfig = Field(default_factory=LockConfig)
     # SPEC §6.5.1 — operator decision 2026-11-07, initial untuned values, not measured.
     obfuscation: ObfuscationLimits = Field(default_factory=ObfuscationLimits)
+    # SPEC §4.6 — AST differ budgets (M4-B). Additive; absent section keeps the defaults.
+    ast: AstLimits = Field(default_factory=AstLimits)
 
     @classmethod
     def load(cls, path: Path) -> Config:
@@ -311,6 +318,12 @@ min_blob_length = 200
 entropy_min_length = 64
 entropy_threshold_bits = 4.5
 min_escapes_per_line = 20
+
+[ast]
+max_nodes = 50000
+max_depth = 64
+max_changes = 2000
+
 """
 
 

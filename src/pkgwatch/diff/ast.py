@@ -1,4 +1,4 @@
-"""Symbol-level comparison of Python modules (SPEC §4.6, M4-B).
+"""Symbol-level comparison of Python modules (M4, report surface only).
 
 Only the standard library parser is used: ``ast.parse`` builds a tree from text and never
 imports, compiles to bytecode or runs the module. JavaScript/TypeScript/Rust would need a

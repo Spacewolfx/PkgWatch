@@ -5,11 +5,22 @@ All notable changes to pkgwatch are documented here. The format is kept close to
 states whether its detection quality was measured — most is not, and nothing here is proof
 of malicious behaviour.
 
-## Unreleased — M3 dataset soundness
+## 0.3.0 — 2026-11-15
 
 Turns the pairs `compare` and `lock` already analyse into a sound, reproducible,
-label-joined dataset. Static analysis only; no package content is executed and no model is
-trained. Detection quality remains unmeasured.
+label-joined dataset, and adds a report-only symbol-level diff for Python files. Static
+analysis only; no package content is executed and no model is trained. Detection quality
+remains unmeasured.
+
+### Added — symbol diff
+
+- `compare` reports `ast_changes` and `ast_changes_omitted` for changed `.py` files:
+  function, class and import additions/removals, plus body or signature changes matched by
+  qualified name. Compare JSON `schema_version` is `3`.
+- Bounded by `[ast]` (`max_nodes`, `max_depth`, `max_changes`): a module over a budget is
+  skipped as a whole and recorded, never half-parsed. AST failures go to `ast_errors`, not
+  `parse_errors`, so they cannot flip `analysis_incomplete`.
+- Report surface only: rules, features and the score never read the block.
 
 ### Added — record seam
 

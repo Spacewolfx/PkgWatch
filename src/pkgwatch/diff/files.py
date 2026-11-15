@@ -149,7 +149,7 @@ def build_diff_context(
                     files_new[path] = view_new
 
     # ``views_incomplete`` describes the *line-level* views only: an AST failure does not
-    # reduce what the rules can read, so it must not change the score (SPEC §4.6).
+    # reduce what the rules can read, so it must not change the score.
     views_incomplete = bool(parse_errors)
     ast_changes: tuple[AstChange, ...] = ()
     ast_changes_omitted = 0

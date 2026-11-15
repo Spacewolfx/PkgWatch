@@ -673,7 +673,7 @@ class AstChangeKind(StrEnum):
 
 
 class AstLimits(BaseModel):
-    """M4-B bounds for the Python AST differ (SPEC §4.6). Initial untuned values.
+    """M4 bounds for the Python AST differ. Initial untuned values.
 
     A module over either budget is skipped as a whole and recorded, never half-parsed.
     """
@@ -723,7 +723,7 @@ class DiffContext(BaseModel):
     parse_errors: tuple[ParseError, ...] = ()
     limits: SandboxLimits
     obfuscation: ObfuscationLimits = Field(default_factory=ObfuscationLimits)
-    # Additive (M4-B): symbol-level changes on changed ``.py`` paths. Rules, features and
+    # Additive (M4): symbol-level changes on changed ``.py`` paths. Rules, features and
     # the score never read this field; it is report surface only.
     ast_changes: tuple[AstChange, ...] = ()
     ast_changes_omitted: int = Field(default=0, ge=0)

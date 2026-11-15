@@ -1,4 +1,4 @@
-"""The AST block through ``compare`` on a PyPI pair (M4-B).
+"""The AST block through ``compare`` on a PyPI pair (M4).
 
 Symbol changes are report surface only: no rule consumes them, the score is unchanged, and
 no source text appears in the artifact.

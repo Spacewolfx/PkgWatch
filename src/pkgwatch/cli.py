@@ -278,7 +278,7 @@ class CompareReport(TypedDict):
     digests: dict[str, str]
     changed_files: list[ChangedFileOut]
     changed_files_omitted: int
-    # Ecosystem-independent (M4-B): Python symbol changes on changed paths, sorted and
+    # Ecosystem-independent (M4): Python symbol changes on changed paths, sorted and
     # capped at ``[ast].max_changes``. No source text, no rule consumes it.
     ast_changes: list[AstChangeOut]
     ast_changes_omitted: int

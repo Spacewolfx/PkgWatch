@@ -143,7 +143,7 @@ class FetchConfig(BaseModel):
     max_redirects: int = Field(default=5, ge=0, le=10)
     # The registry's User-Agent policy and rate limits were not verified offline; no contact
     # is claimed here, and this value is sent as is.
-    user_agent: str = Field(default="pkgwatch/0.2.0", min_length=1, max_length=128)
+    user_agent: str = Field(default="pkgwatch/0.3.0", min_length=1, max_length=128)
     # ``None`` means the operating system's user cache directory, never the repository.
     cache_dir: Path | None = None
 
@@ -198,7 +198,7 @@ class Config(BaseModel):
     lock: LockConfig = Field(default_factory=LockConfig)
     # SPEC §6.5.1 — operator decision 2026-11-07, initial untuned values, not measured.
     obfuscation: ObfuscationLimits = Field(default_factory=ObfuscationLimits)
-    # SPEC §4.6 — AST differ budgets (M4-B). Additive; absent section keeps the defaults.
+    # AST differ budgets (M4). Additive; an absent section keeps the defaults.
     ast: AstLimits = Field(default_factory=AstLimits)
 
     @classmethod
@@ -296,7 +296,7 @@ max_metadata_bytes = 8388608
 max_tarball_bytes = 67108864
 request_timeout_seconds = 15.0
 max_redirects = 5
-user_agent = "pkgwatch/0.2.0"
+user_agent = "pkgwatch/0.3.0"
 # cache_dir: omit to use the user cache directory (never the repository)
 
 [lock]

@@ -91,7 +91,7 @@ uv run pkgwatch config-check --path pkgwatch.toml
 ```
 
 The code itself also installs as a wheel (`pip install .` — hatchling, single runtime
-dependency `pydantic`); version 0.2.0. Licensed under MIT (see `LICENSE`). Publishing to
+dependency `pydantic`); version 0.3.0. Licensed under MIT (see `LICENSE`). Publishing to
 a package index is not set up yet: install from the repository checkout until that
 decided path exists.
 
@@ -519,8 +519,8 @@ publishing TODO: [docs/ci.md](docs/ci.md).
 
 `pkgwatch.toml` has one accepted version, `config_version = 1`; anything else exits 2 with
 `CONFIG_INVALID`. `lock --config` reads `[lock]`; `compare --config` reads the fetch,
-sandbox, scoring and obfuscation limits. (`[fetch]` and `[obfuscation]`, all values are
-defaults):
+sandbox, scoring and obfuscation limits, plus the `[ast]` symbol-diff budgets. (`[fetch]`,
+`[obfuscation]` and `[ast]`, all values are defaults):
 
 ```toml
 [fetch]
@@ -528,13 +528,18 @@ max_metadata_bytes = 8388608      # hard cap on the registry document
 max_tarball_bytes = 67108864      # hard cap on each tarball
 request_timeout_seconds = 15.0
 max_redirects = 5                 # same-host redirects only
-user_agent = "pkgwatch/0.2.0"
+user_agent = "pkgwatch/0.3.0"
 
 [obfuscation]
 min_blob_length = 200             # base64-like run, characters
 entropy_min_length = 64           # string-literal length to score
 entropy_threshold_bits = 4.5      # Shannon entropy per character
 min_escapes_per_line = 20         # \xHH / \uHHHH escapes on one ADDED line
+
+[ast]
+max_nodes = 50000                 # parsing budget; over it the module is skipped whole
+max_depth = 64                    # nesting budget, same all-or-nothing rule
+max_changes = 2000                # rows kept per compare; the rest are counted
 
 [lock]
 max_pairs = 300                   # over this exits 2 with TOO_MANY_PAIRS

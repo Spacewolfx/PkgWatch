@@ -1,4 +1,4 @@
-"""The Python symbol differ (M4-B): bounded, total and deterministic.
+"""The Python symbol differ (M4): bounded, total and deterministic.
 
 ``ast.parse`` only builds a tree; nothing here imports or runs the module under test.
 """

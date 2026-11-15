@@ -16,10 +16,10 @@ def _human(label: Label = Label.BENIGN) -> HumanLabel:
         old_version="1.0.0",
         new_version="1.1.0",
         label=label,
-        reviewer="halley",
+        reviewer="reviewer",
         reviewed_at="2026-11-14",
         confidence=1.0,
-        provenance="human:halley:2026-11-14",
+        provenance="human:reviewer:2026-11-14",
     )
 
 
@@ -104,9 +104,9 @@ def test_a_label_for_another_pair_is_ignored() -> None:
         old_version="1.0.0",
         new_version="1.1.0",
         label=Label.MALICIOUS,
-        reviewer="halley",
+        reviewer="reviewer",
         reviewed_at="2026-11-14",
         confidence=1.0,
-        provenance="human:halley:2026-11-14",
+        provenance="human:reviewer:2026-11-14",
     )
     assert resolve_label(make_analysis_record(), (other,), ()).source is LabelSource.NONE

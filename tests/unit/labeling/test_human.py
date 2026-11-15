@@ -12,7 +12,7 @@ from pkgwatch.labeling.human import HUMAN_COLUMNS, load_human_labels
 from pkgwatch.models import Label
 
 HEADER = ",".join(HUMAN_COLUMNS)
-ROW = "npm,demo-pkg,1.0.0,1.1.0,benign,halley,2026-11-14,1.0,reviewed the diff"
+ROW = "npm,demo-pkg,1.0.0,1.1.0,benign,reviewer,2026-11-14,1.0,reviewed the diff"
 
 
 def _write(tmp_path: Path, *rows: str, name: str = "a.csv") -> Path:
@@ -26,12 +26,12 @@ def test_a_valid_row_becomes_a_human_label_without_the_note(tmp_path: Path) -> N
     labels = load_human_labels(_write(tmp_path, ROW))
     assert len(labels) == 1
     assert labels[0].label is Label.BENIGN
-    assert labels[0].provenance == "human:halley:2026-11-14"
+    assert labels[0].provenance == "human:reviewer:2026-11-14"
     assert not hasattr(labels[0], "note")
 
 
 def test_an_empty_confidence_defaults_to_one(tmp_path: Path) -> None:
-    row = "npm,demo-pkg,1.0.0,1.1.0,benign,halley,2026-11-14,,"
+    row = "npm,demo-pkg,1.0.0,1.1.0,benign,reviewer,2026-11-14,,"
     assert load_human_labels(_write(tmp_path, row))[0].confidence == 1.0
 
 
@@ -43,7 +43,7 @@ def test_a_malformed_row_rejects_the_whole_file(tmp_path: Path) -> None:
 
 
 def test_an_unknown_label_value_is_a_value_error(tmp_path: Path) -> None:
-    row = "npm,demo-pkg,1.0.0,1.1.0,probably-fine,halley,2026-11-14,1.0,"
+    row = "npm,demo-pkg,1.0.0,1.1.0,probably-fine,reviewer,2026-11-14,1.0,"
     with pytest.raises(LabelError) as excinfo:
         load_human_labels(_write(tmp_path, row))
     assert excinfo.value.code == "LABEL_VALUE_INVALID"
@@ -63,7 +63,7 @@ def test_a_non_utf8_note_byte_rejects_the_whole_file(tmp_path: Path) -> None:
     # A latin-1 byte in a note cell must map to the stable code, not UnicodeDecodeError.
     directory = tmp_path / "human"
     directory.mkdir()
-    row = "npm,demo-pkg,1.0.0,1.1.0,benign,halley,2026-11-14,1.0,caf\xe9"
+    row = "npm,demo-pkg,1.0.0,1.1.0,benign,reviewer,2026-11-14,1.0,caf\xe9"
     (directory / "a.csv").write_bytes((HEADER + "\n" + row + "\n").encode("latin-1"))
     with pytest.raises(LabelError) as excinfo:
         load_human_labels(directory)
@@ -72,7 +72,7 @@ def test_a_non_utf8_note_byte_rejects_the_whole_file(tmp_path: Path) -> None:
 
 def test_an_oversized_csv_field_rejects_the_whole_file(tmp_path: Path) -> None:
     # A single field beyond csv.field_size_limit must map to the stable code, not csv.Error.
-    row = "npm,demo-pkg,1.0.0,1.1.0,benign,halley,2026-11-14,1.0," + "x" * (
+    row = "npm,demo-pkg,1.0.0,1.1.0,benign,reviewer,2026-11-14,1.0," + "x" * (
         csv.field_size_limit() + 1
     )
     with pytest.raises(LabelError) as excinfo:
@@ -93,7 +93,7 @@ def test_an_oversized_header_field_rejects_the_whole_file(tmp_path: Path) -> Non
 
 def test_a_note_with_an_exotic_newline_is_not_cut_into_extra_records(tmp_path: Path) -> None:
     # str.splitlines() treats \v as a record break before csv sees the quoted cell.
-    row = 'npm,demo-pkg,1.0.0,1.1.0,benign,halley,2026-11-14,1.0,"line one\x0bline two"'
+    row = 'npm,demo-pkg,1.0.0,1.1.0,benign,reviewer,2026-11-14,1.0,"line one\x0bline two"'
     labels = load_human_labels(_write(tmp_path, row))
     assert len(labels) == 1
     assert labels[0].label is Label.BENIGN

@@ -1,7 +1,7 @@
 [project]
 name = "pkgwatch"
 version = "0.3.0"
-description = "Package behavior diff monitor for npm, PyPI and crates.io"
+description = "Package behavior diff monitor for npm and PyPI"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.12,<3.13"

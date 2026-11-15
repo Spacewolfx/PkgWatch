@@ -734,4 +734,4 @@ uv run ruff format --check .
 - Raw gate logs: [docs/](docs/)
 - Licence: [MIT](LICENSE)
 
-© 2026 Spacewolfx
+© 2026 pkgwatch contributors

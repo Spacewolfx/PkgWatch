@@ -475,10 +475,10 @@ carried on `DiffContext` (§4.2) so rules stay pure functions of their context.
 
 Labels are the only non-deterministic input to the dataset, so they get the strictest rules.
 
-1. **No LLM may create a label.** A model may draft a *rationale* for a human reviewer; that
-   rationale is stored separately as `rationale_draft`, never in `label`, and it is not a
-   label even if the reviewer agrees with it — the reviewer's own judgement is the label.
-   Enforced: `label_source` has no `model` value.
+1. **Only a person creates a label.** A draft *rationale* may be prepared for the reviewer;
+   it is stored separately as `rationale_draft`, never in `label`, and it is not a label even
+   if the reviewer agrees with it — the reviewer's own judgement is the label. Enforced:
+   `label_source` is one of `human`, `advisory_db`, `rule_derived` or `none`.
 2. **Precedence when sources conflict:** `human` > `advisory_db` > `rule_derived` > `none`.
    The winner's `label_source`/`label_confidence` are recorded, and the losing claims are
    kept in `label_conflicts.jsonl` (a file, not a table — M3 has no database on this path;

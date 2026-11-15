@@ -65,7 +65,8 @@ threshold the malicious recall, benign false-alarm rate, hard-negative false-ala
   honest because rule 1 itself sees the real shipped file.
 - **Rule coverage of the whole ecosystem.** Families 1–2 only, npm only, and only the pairs the two
   inputs make available.
-- **Any model layer.** No LLM is called anywhere in this script; M3 outputs cannot leak into it.
+- **Any training layer.** This script calls nothing outside its own inputs; M3 outputs
+  cannot leak into it.
 
 The brief that produced this harness was truncated in the middle of step 3 of "Procedure per
 pair". Steps 1–3 are verbatim from it; the scoring call, the metric definitions and the four output

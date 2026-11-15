@@ -16,8 +16,8 @@ lists which checkpoints are actually proven.
 
 Two commitments shape the whole design:
 
-1. **The rule engine is the source of truth for alerts.** Nothing a model produces can
-   raise, suppress, or change an alert.
+1. **The rule engine is the source of truth for alerts.** Nothing outside the rule engine
+   can raise, suppress, or change an alert.
 2. **Package content is hostile input.** It is downloaded, unpacked, read, and parsed —
    never executed, imported, installed, or run, not even in tests.
 
@@ -98,7 +98,7 @@ The monitored-package pipeline this document was written for. It is the target s
 
 ```
                      ┌──────────────────────────────────────────────────────────┐
-                     │  HOT PATH (deterministic, no model, no LLM)              │
+                     │  HOT PATH (deterministic, rule-based rules)              │
                      └──────────────────────────────────────────────────────────┘
 
  watchlist ──▶ ingest/<eco>.py ──▶ Release ──▶ store.releases (status=pending)

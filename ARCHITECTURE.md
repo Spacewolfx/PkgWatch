@@ -1,8 +1,8 @@
 # pkgwatch — ARCHITECTURE
 
-Version: 0.4 (as built) · Status: on-demand analysis implemented — `compare` for npm **and**
-PyPI, `lock` for npm `package-lock.json` v2/v3; the batch/dataset/model half of this design
-is **not** built · Date: 2026-11-11
+Version: 0.5 (as built) · Status: on-demand analysis implemented — `compare` for npm **and**
+PyPI, `lock` for npm `package-lock.json` v2/v3, plus the M3 dataset export path; the batch
+pipeline is not built and the offline model layer was dropped · Date: 2026-11-15
 
 pkgwatch watches releases of *monitored* packages on npm, PyPI and crates.io, compares
 each release against the one before it, extracts behavioral changes as deterministic
@@ -30,7 +30,7 @@ Two commitments shape the whole design:
 | `src/pkgwatch/config.py` | Config | Limits, ecosystems, paths, thresholds, seeds; loaded from TOML | built |
 | `src/pkgwatch/models.py` | Records | pydantic v2 models for everything crossing a module boundary; the report shapes are separate `TypedDict`s in `cli.py` | built |
 | `src/pkgwatch/version.py` | Version parser | PEP 440 + npm semver ranges, one total order used by pairing | built |
-| `src/pkgwatch/ingest/` | Feed readers | Discover new releases per ecosystem; `npm.py`, `pypi.py`, `crates.py` | **empty package** — designed, not built |
+| `src/pkgwatch/ingest/` | Feed readers | Discover new releases per ecosystem; `npm.py`, `pypi.py` | **empty package** — designed, not built |
 | `src/pkgwatch/fetch/npm.py` | npm downloader | Registry document + tarball to temp files; digest verified; **no extraction** | built |
 | `src/pkgwatch/fetch/pypi.py` | PyPI downloader | Project document + per-version documents + sdist/wheel; PEP 503 names, host allowlist | built |
 | `src/pkgwatch/fetch/cache.py` | Download cache | Verified-digest-keyed artifact cache in the OS user cache dir | built |
@@ -39,7 +39,7 @@ Two commitments shape the whole design:
 | `src/pkgwatch/diff/files.py` | Differ | File-level changes → `DiffContext`; PyPI sdist re-rooting | built |
 | `src/pkgwatch/diff/manifest.py` | Manifest diff | Root `package.json` sections, both trees | built |
 | `src/pkgwatch/diff/pypi_metadata.py` | Metadata diff | Shipped `PKG-INFO`/`METADATA` dependencies | built |
-| `src/pkgwatch/diff/ast.py` | AST differ | Symbol-level source changes | **not built** (M4 design) |
+| `src/pkgwatch/diff/ast.py` | AST differ | Symbol-level changes for changed `.py` files; bounded, report-only | built (Python only) |
 | `src/pkgwatch/rules/` | Rule families | Pure functions `DiffContext -> list[Finding]`; 18 rules, npm 12 + PyPI 6 | built |
 | `src/pkgwatch/lockfile/` | Lockfile reader | Untrusted `package-lock.json` v2/v3 parse + plan (no network) | built |
 | `src/pkgwatch/lock/` | Lock runner | Per-pair analysis, report shaping, baseline | built |
@@ -161,8 +161,8 @@ methods exist and are covered by tests, but no production command advances a lif
 ## 3. Trust boundaries
 
 Five boundaries, each with a named threat and the mechanism that holds it. TB1–TB4 are
-implemented and tested; TB5 describes the un-built dataset/model half (§2.2, §8) and is here
-so that whoever builds it inherits the reasoning rather than reinventing it.
+implemented and tested; TB5 covers the dataset half (§2.2, §8) and is here so that whoever
+builds the batch pipeline inherits the reasoning rather than reinventing it.
 
 ### TB1 — Registry → ingest
 *Threat:* registry JSON is attacker-influenced (package names, descriptions, maintainer
@@ -214,11 +214,11 @@ PyPI build manifests (`setup.py`, `pyproject.toml`, `setup.cfg`) are analysed as
 exactly the same rule as any other file: `setup.py` is never executed or built, only matched
 for lifecycle hooks and capability imports.
 
-### TB5 — Store → dataset → model
-*Threat:* label leakage, model output re-entering the scoring path, unreproducible
-datasets. *Mechanism:* split assigned by hashing `package_name` (never version, never
-finding); `rule_derived` labels excluded from val/test metrics by a validator, not by
-convention; model outputs live in their own tables and are never joined into `ScoreResult`.
+### TB5 — Store → dataset
+*Threat:* label leakage and unreproducible datasets. *Mechanism:* split assigned by hashing
+`package_name` (never version, never finding); `rule_derived` labels excluded from val/test
+metrics by a validator, not by convention. The offline model layer was dropped; if one is
+added, its output must never join `ScoreResult`.
 
 ### Process model
 One Python process, no subprocess spawning, no execution of package content, no plugin
@@ -320,7 +320,7 @@ must be visible in the data).
   `LockReport`, so a new format cannot change a finding, a score or an exit code.
 - **Label sources** implement `LabelSource.load() -> list[LabeledKey]`; a new advisory feed
   is a new file in `labeling/`, and cannot invent labels without declaring `label_source`
-  (M3 design, not built).
+  (built in M3).
 
 ## 7. Testing strategy
 
@@ -334,11 +334,11 @@ must be visible in the data).
 | Offline registry doubles | pytest | `FakeRegistry`, `MultiRegistry`, `PyPIRegistry`: documents, tarballs, wheels and redirects served from memory — **no test opens a socket**, and per-test request counts are asserted, which is how the host allowlist and the cache are proven |
 | CLI integration | pytest, `cli.main(argv, client=…, config=…)` | `compare` (npm + PyPI), `lock`, `rules`, `config-*`: exit codes, stable error codes, text/JSON/Markdown/SARIF shape, caps, warnings, baseline, plan |
 | Recorded invariants | pytest | the two pairs the README quotes keep their exact numbers: synthetic installer → 4 findings, score 94; benign bump → 0 findings, score 0 |
-| Integration | pytest + fixtures | one benign and one synthetic-malicious pair per ecosystem → expected findings — built, and the layer the `760` above mostly is |
-| Dataset schema | pytest | export validates against `DatasetRecord`; no raw text in features; no package in two splits; `rule_derived` excluded from test metrics — **M3, not built, not run** |
+| Integration | pytest + fixtures | one benign and one synthetic-malicious pair per ecosystem → expected findings — built, and the layer most of the suite above exercises |
+| Dataset schema | pytest | export validates against `DatasetRecord`; no raw text in features; no package in two splits; `rule_derived` excluded from test metrics — built and run (M3) |
 | Structural | pytest | §5 import/SQL/exec greps |
 
-Current gate: **760 passed, 1 skipped** (a Windows symlink-creation property case that the OS
+Current gate: **1034 passed, 1 skipped** (a Windows symlink-creation property case that the OS
 denies without Developer Mode), `ruff format --check` + `ruff check` clean, `mypy --strict src/`
 clean over 52 source files. Detection quality is a separate, unmet obligation: severities and
 weights are initial untuned values, every report says `measured: false`, and the README states
@@ -360,7 +360,7 @@ below is each checkpoint and whether it is actually proven today.
 | **M1** — sandbox + fetch in isolation | The highest-risk surface holds alone, with no rules to reason about: every SPEC §4.3 rejection fires, no write lands outside the root, digests are verified before bytes are trusted. | **proven**, for tar and zip, npm and PyPI. Hypothesis property tests plus one test per rejection condition. |
 | **M2** — `DiffContext → Finding → ScoreResult` | The contract end-to-end on fixtures: rules see one object, the score is a pure deterministic function of findings, monotonicity holds, output is byte-stable. | **proven** on the on-demand path. `store/` is built and tested, but no shipped command writes a report to it — the "→ store" half of this arrow is a library, not a pipeline. |
 | **M3** — dataset soundness | Splits leak nothing, features carry no source text, the export validates against `DatasetRecord`, `rule_derived` labels are excluded from metrics. | **proven on the on-demand path.** `compare`/`lock --record-dir` write `AnalysisRecord` files; `export-dataset` joins labels, assigns the salted split and writes JSONL plus a manifest; `validate-dataset` re-checks every invariant. Tests assert the 69-key catalog, no source text in features, one split per package, and that `unknown` and holdout `rule_derived` are never metric-eligible. `data/labels/` ships empty, so no measured metric exists yet. |
-| **M4** — widened coverage | PyPI, crates.io, AST-level diff, rule families 3–4. | **partial.** PyPI `compare` ships (6 `PYPI_*` rules, sdist re-rooting, per-version registry metadata). Families 3–4 ship but are gated: 6 rules (`BASE64_BLOB_PRESENT`, `HEX_ESCAPE_DENSITY`, `HIGH_ENTROPY_STRINGS`, `DEPENDENCY_ADDED`, `PYPI_DEPENDENCY_ADDED`, `REPOSITORY_URL_CHANGED`) are off unless `--experimental`, and their weights are untuned. `crates.io` and `diff/ast.py` are not built; file-level diff is the only differ. |
+| **M4** — widened coverage | PyPI, AST-level diff, rule families 3–4. | **partial.** PyPI `compare` ships (6 `PYPI_*` rules, sdist re-rooting, per-version registry metadata). Families 3–4 ship but are gated: 6 rules (`BASE64_BLOB_PRESENT`, `HEX_ESCAPE_DENSITY`, `HIGH_ENTROPY_STRINGS`, `DEPENDENCY_ADDED`, `PYPI_DEPENDENCY_ADDED`, `REPOSITORY_URL_CHANGED`) are off unless `--experimental`, and their weights are untuned. `diff/ast.py` ships for Python `.py` files as bounded, report-only symbol changes; JavaScript, TypeScript and Rust stay line-level. `crates.io` support was dropped before release. |
 
 Two things shipped that this milestone plan did not anticipate:
 
@@ -372,5 +372,6 @@ Two things shipped that this milestone plan did not anticipate:
   pkgwatch without parsing prose.
 
 The honest summary: the security-critical half of the design is built and tested, and the
-data path is built while the model is not. Anyone extending pkgwatch should treat §2.2's
+data path is built; the offline model layer was dropped because labels ship empty. Anyone
+extending pkgwatch should treat §2.2's
 batch pipeline as the proposal it is, and should not claim progress beyond M4 from the code in §2.1.

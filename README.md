@@ -264,6 +264,8 @@ silently quiet — it is quiet because this pair is benign.
 - `pypi metadata changes:` — the per-version PyPI document's `requires_dist`,
   `requires_python`, `classifiers`, `project_urls`, `entry_points`, `yanked` and
   `summary`, `old -> new`. Same `(not available)` convention. **PyPI only.**
+- `symbol changes:` — Python only: `kind side path:line symbol` for changed `.py` files.
+  Capped at 20 rows with `... N more`; a skipped module is a warning, never silent.
 - `ignored:` — one line per `--ignore` rule, including rules with zero findings.
 - `explanations:` — only with `--explain`, for rules that fired.
 
@@ -274,6 +276,37 @@ Detection quality has not been measured. Findings are signals for human review, 
 ```
 
 JSON mode carries `"measured": false` instead.
+
+### Symbol-level changes (Python)
+
+For changed `.py` files, `compare` parses both sides with the standard library `ast` module
+and matches functions, classes and imports by qualified name. It never imports, compiles or
+runs the module. The block is report surface only: no rule, feature or weight reads it, so
+adding it cannot change the score. A body or signature edit is one `function_changed`; a
+class body edit is a removal plus an addition; a change to a shadowed definition is still
+reported. Only qualified names and line numbers are emitted — never source text.
+
+Live output (2026-11-15, real registries):
+
+```console
+$ pkgwatch compare pypi:six@1.16.0 pypi:six@1.17.0
+files: added=0, removed=0, modified=11
+...
+symbol changes:
+  import_added new test_six.py:118 dbm
+  import_added new test_six.py:121 dbm.ndbm
+  function_changed new test_six.py:127 test_move_items
+  function_changed new test_six.py:234 test_getoutput
+
+$ pkgwatch compare npm:is-number@6.0.0 npm:is-number@7.0.0
+files: added=0, removed=0, modified=4
+```
+
+Text and Markdown show at most 20 rows; JSON keeps up to `max_changes` (2000) and reports
+the rest as `ast_changes_omitted`. A module that cannot be parsed, is truncated by
+`text_scan_bytes`, or exceeds an `[ast]` budget is skipped **whole** and named in a
+`symbol diff skipped: <path> (<code>)` warning, in JSON `warnings` and on stderr — it never
+reads as "no symbol changes".
 
 ## JSON schema
 

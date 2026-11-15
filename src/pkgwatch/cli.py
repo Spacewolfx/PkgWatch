@@ -70,6 +70,7 @@ from pkgwatch.models import (
     ExtractionResult,
     FileChange,
     Finding,
+    ParseError,
     RuleFamily,
     ScoreResult,
     Severity,
@@ -116,6 +117,7 @@ UNKNOWN_RULE_ID = "UNKNOWN_RULE_ID"
 
 CHANGED_FILES_LIMIT = 50
 SYMBOL_CHANGES_LIMIT = 20
+AST_WARNINGS_LIMIT = 10
 NOT_AVAILABLE = "(not available)"
 
 # Version of the compare JSON report only. models.SCHEMA_VERSION versions the store and
@@ -1217,6 +1219,7 @@ def _compare(
             manifest_changes=manifest_changes,
             ast_changes=ctx.ast_changes,
             ast_changes_omitted=ctx.ast_changes_omitted,
+            ast_errors=ctx.ast_errors,
             # Materialize: the callee may iterate more than once.
             explanations=(
                 explanations_for(tuple(item.rule_id for item in display)) if explain else {}
@@ -1363,6 +1366,7 @@ def _report(
     manifest_changes: ManifestChanges,
     ast_changes: Sequence[AstChange],
     ast_changes_omitted: int,
+    ast_errors: Sequence[ParseError],
     explanations: Mapping[str, tuple[str, str]],
     ignored_rules: list[IgnoredRuleOut],
 ) -> CompareReport:
@@ -1408,7 +1412,7 @@ def _report(
         ignored_rules=ignored_rules,
         rule_set_version=result.rule_set_version,
         measured=False,
-        warnings=_noop_warnings(counts),
+        warnings=[*_noop_warnings(counts), *_ast_warnings(ast_errors)],
         disclaimer=DISCLAIMER,
     )
     if ecosystem is Ecosystem.PYPI:
@@ -1434,6 +1438,20 @@ def _noop_warnings(files: FileCounts) -> list[str]:
             "(possible silent no-op diff)"
         ]
     return []
+
+
+def _ast_warnings(errors: Sequence[ParseError]) -> list[str]:
+    """Surface symbol-diff skips without making them findings or touching the score.
+
+    A skip means no symbol rows for that file, so silence would read as "nothing
+    changed". The list is capped; the only guaranteed bound is the file-count limit.
+    """
+    shown = errors[:AST_WARNINGS_LIMIT]
+    out = [f"symbol diff skipped: {error.path} ({error.detail})" for error in shown]
+    hidden = len(errors) - len(shown)
+    if hidden > 0:
+        out.append(f"{hidden} more symbol-diff skip(s) not listed")
+    return out
 
 
 def _counts(changes: Sequence[FileChange]) -> FileCounts:

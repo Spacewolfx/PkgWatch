@@ -138,6 +138,18 @@ def test_the_emission_is_sorted_and_stable() -> None:
     )
 
 
+def test_a_change_to_a_shadowed_definition_is_reported() -> None:
+    old = "def f():\n    return 1\n\ndef f():\n    return 2\n"
+    new = "def f():\n    return 1\n\ndef f():\n    return 3\n"
+    assert _diff(old, new) == [("function_changed", "new", "f")]
+
+
+def test_removing_a_shadowed_definition_is_reported() -> None:
+    old = "def f():\n    return 1\n\ndef f():\n    return 2\n"
+    new = "def f():\n    return 1\n"
+    assert _diff(old, new) == [("function_changed", "new", "f")]
+
+
 def test_the_change_cap_is_reported_not_silent() -> None:
     old = "".join(f"def a{i}():\n    pass\n" for i in range(5))
     new = "".join(f"def b{i}():\n    pass\n" for i in range(5))
@@ -175,3 +187,5 @@ def test_long_input_round_trips_without_raising() -> None:
 def test_limits_must_be_positive() -> None:
     with pytest.raises(ValueError, match="greater than 0"):
         AstLimits(max_nodes=0)
+    with pytest.raises(ValueError, match="greater than 0"):
+        AstLimits(max_total_bytes=0)

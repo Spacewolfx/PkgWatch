@@ -540,6 +540,7 @@ min_escapes_per_line = 20         # \xHH / \uHHHH escapes on one ADDED line
 max_nodes = 50000                 # parsing budget; over it the module is skipped whole
 max_depth = 64                    # nesting budget, same all-or-nothing rule
 max_changes = 2000                # rows kept per compare; the rest are counted
+max_total_bytes = 16777216        # whole-compare budget; later modules are skipped whole
 
 [lock]
 max_pairs = 300                   # over this exits 2 with TOO_MANY_PAIRS

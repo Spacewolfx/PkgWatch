@@ -33,8 +33,11 @@ from pkgwatch.models import AstChange, AstChangeKind, AstLimits, AstSide
 PYTHON_SUFFIX: Final = ".py"
 SYNTAX_ERROR: Final = "SOURCE_SYNTAX_ERROR"
 BUDGET_EXCEEDED: Final = "AST_BUDGET_EXCEEDED"
+TOTAL_BUDGET_EXCEEDED: Final = "AST_TOTAL_BUDGET_EXCEEDED"
 NOT_PYTHON: Final = "NOT_PYTHON"
 INPUT_TRUNCATED: Final = "AST_INPUT_TRUNCATED"
+
+Definition = ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
 
 
 @dataclass(frozen=True)
@@ -167,11 +170,11 @@ def _collect(node: ast.AST, prefix: str, out: ModuleSymbols) -> None:
     for child in ast.iter_child_nodes(node):
         if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):
             name = f"{prefix}.{child.name}" if prefix else child.name
-            out.functions.setdefault(name, SymbolInfo(child.lineno, _fingerprint(child)))
+            _record(out.functions, name, child)
             _collect(child, name, out)
         elif isinstance(child, ast.ClassDef):
             name = f"{prefix}.{child.name}" if prefix else child.name
-            out.classes.setdefault(name, SymbolInfo(child.lineno, _fingerprint(child)))
+            _record(out.classes, name, child)
             _collect(child, name, out)
         elif isinstance(child, ast.Import):
             for alias in child.names:
@@ -183,6 +186,23 @@ def _collect(node: ast.AST, prefix: str, out: ModuleSymbols) -> None:
                 out.imports.setdefault(dotted, child.lineno)
         else:
             _collect(child, prefix, out)
+
+
+def _record(table: dict[str, SymbolInfo], name: str, node: Definition) -> None:
+    """Fold every definition under one name into one row.
+
+    A module may define the same name more than once; only the last one runs, but a change
+    to a shadowed earlier body is still a change and must not disappear. Chaining the
+    per-definition fingerprints in source order detects either body without inventing
+    synthetic names, and the row keeps the first definition's line.
+    """
+    digest = _fingerprint(node)
+    existing = table.get(name)
+    if existing is None:
+        table[name] = SymbolInfo(line=node.lineno, fingerprint=digest)
+        return
+    chained = hashlib.sha256(f"{existing.fingerprint}:{digest}".encode("ascii")).hexdigest()
+    table[name] = SymbolInfo(line=existing.line, fingerprint=chained)
 
 
 def _fingerprint(node: ast.AST) -> str:

@@ -23,7 +23,13 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from pkgwatch.diff.ast import INPUT_TRUNCATED, ModuleSymbols, diff_modules, parse_module
+from pkgwatch.diff.ast import (
+    INPUT_TRUNCATED,
+    TOTAL_BUDGET_EXCEEDED,
+    ModuleSymbols,
+    diff_modules,
+    parse_module,
+)
 from pkgwatch.models import (
     DIFF_LINE_MAX_CHARS,
     EVIDENCE_MAX_CHARS,
@@ -190,11 +196,14 @@ def _symbol_changes(
 
     Only files that already have a line-level change are considered, and only when both
     sides are complete text views; a truncated module is never parsed (a cut module can
-    parse into a plausible but wrong tree) and is recorded instead.
+    parse into a plausible but wrong tree) and is recorded instead. ``max_total_bytes``
+    caps the aggregate parse work for the whole compare; once spent, later modules are
+    skipped with a token rather than parsed partially.
     """
     out: list[AstChange] = []
     errors: list[ParseError] = []
     omitted = 0
+    parsed_bytes = 0
     for change in changes:
         path = change.path_new or change.path_old
         if path is None or not change.is_text:
@@ -208,6 +217,17 @@ def _symbol_changes(
         if any(view.truncated for view in (old_view, new_view) if view is not None):
             errors.append(ParseError(path=path, kind=ParseErrorKind.SYNTAX, detail=INPUT_TRUNCATED))
             continue
+        module_bytes = sum(
+            len(view.content.encode("utf-8", "replace"))
+            for view in (old_view, new_view)
+            if view is not None
+        )
+        if parsed_bytes + module_bytes > limits.max_total_bytes:
+            errors.append(
+                ParseError(path=path, kind=ParseErrorKind.SYNTAX, detail=TOTAL_BUDGET_EXCEEDED)
+            )
+            continue
+        parsed_bytes += module_bytes
         old_symbols = ModuleSymbols()
         new_symbols = ModuleSymbols()
         failed = False

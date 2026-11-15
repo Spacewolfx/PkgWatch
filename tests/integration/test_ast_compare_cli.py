@@ -13,7 +13,7 @@ import pytest
 
 from pkgwatch import cli
 from pkgwatch.config import Config
-from pkgwatch.models import SandboxLimits
+from pkgwatch.models import AstLimits, SandboxLimits
 from tests.support.pypi_registry import PyPIRegistry, pypi_pair_registry
 
 OLD_VERSION = "1.0.0"
@@ -121,6 +121,21 @@ def test_a_truncated_module_is_never_parsed(
     payload = json.loads(out)
     assert payload["ast_changes"] == []
     assert payload["ast_changes_omitted"] == 0
+    assert any("AST_INPUT_TRUNCATED" in warning for warning in payload["warnings"])
+
+
+def test_the_total_budget_skips_later_modules_and_warns(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    registry = _registry(tmp_path)
+    config = Config(ast=AstLimits(max_total_bytes=16))
+    code, out, err = _run(capsys, registry, "--json", config=config)
+
+    assert code == 0, err
+    payload = json.loads(out)
+    assert payload["ast_changes"] == []
+    assert any("AST_TOTAL_BUDGET_EXCEEDED" in warning for warning in payload["warnings"])
+    assert "AST_TOTAL_BUDGET_EXCEEDED" in err
 
 
 def test_a_syntax_error_keeps_the_line_level_analysis(
@@ -132,3 +147,5 @@ def test_a_syntax_error_keeps_the_line_level_analysis(
     payload = json.loads(out)
     assert payload["ast_changes"] == []
     assert payload["findings"] == []
+    assert any("SOURCE_SYNTAX_ERROR" in warning for warning in payload["warnings"])
+    assert "SOURCE_SYNTAX_ERROR" in err

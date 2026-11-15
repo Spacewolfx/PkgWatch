@@ -683,6 +683,10 @@ class AstLimits(BaseModel):
     max_nodes: int = Field(default=50_000, gt=0)
     max_depth: int = Field(default=64, gt=0)
     max_changes: int = Field(default=2_000, gt=0)
+    # Whole-compare budget, both sides: once it is spent, every further changed Python
+    # module is skipped whole. Without it, 5 000 files of generated code would make the
+    # parser the dominant cost even though each file is individually under its budget.
+    max_total_bytes: int = Field(default=16 * 1024 * 1024, gt=0)
 
 
 class AstChange(BaseModel):

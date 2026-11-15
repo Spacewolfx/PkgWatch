@@ -323,6 +323,7 @@ min_escapes_per_line = 20
 max_nodes = 50000
 max_depth = 64
 max_changes = 2000
+max_total_bytes = 16777216
 
 """
 

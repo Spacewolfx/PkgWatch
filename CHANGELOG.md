@@ -17,9 +17,14 @@ remains unmeasured.
 - `compare` reports `ast_changes` and `ast_changes_omitted` for changed `.py` files:
   function, class and import additions/removals, plus body or signature changes matched by
   qualified name. Compare JSON `schema_version` is `3`.
-- Bounded by `[ast]` (`max_nodes`, `max_depth`, `max_changes`): a module over a budget is
-  skipped as a whole and recorded, never half-parsed. AST failures go to `ast_errors`, not
-  `parse_errors`, so they cannot flip `analysis_incomplete`.
+- Bounded by `[ast]` (`max_nodes`, `max_depth`, `max_changes`, `max_total_bytes`): a module
+  over a budget is skipped as a whole and recorded, never half-parsed. The aggregate byte
+  budget stops a package full of generated Python from making parsing the dominant cost.
+  AST failures go to `ast_errors`, not `parse_errors`, so they cannot flip
+  `analysis_incomplete`.
+- Skips surface as report warnings (capped) instead of silently reading as "no symbol
+  changes". Duplicate definitions under one name are fingerprinted together, so a change to
+  a shadowed earlier body is still reported.
 - Report surface only: rules, features and the score never read the block.
 
 ### Added — record seam

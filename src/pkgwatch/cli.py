@@ -125,6 +125,9 @@ NOT_AVAILABLE = "(not available)"
 # the ecosystem-independent ``ast_changes`` block (with its ``ast_changes_omitted``
 # counter), which is a new key in every report, hence 3. The metadata blocks stay
 # ecosystem-conditional and `ecosystem` tells the reader which one to expect.
+# Simple JSON outputs (config, catalog, plan, dataset, errors) share a versioned
+# envelope. Compare (3) and lock (4) keep their own documented report schemas.
+JSON_ENVELOPE_VERSION = 1
 COMPARE_JSON_SCHEMA_VERSION = 3
 
 # Standard SARIF v2.1.0 schema URI for static analysis integration (GitHub/GitLab).
@@ -306,6 +309,7 @@ class RuleCatalogEntryOut(TypedDict):
 
 
 class RuleCatalogReport(TypedDict):
+    schema_version: int
     rule_set_version: str
     total_rules: int
     rules: list[RuleCatalogEntryOut]
@@ -670,7 +674,9 @@ def _cmd_config_check(args: argparse.Namespace, *, config: Config | None) -> int
         return _error(CONFIG_NOT_FOUND, False)
     except (OSError, ValueError):
         return _error(CONFIG_INVALID, False)
-    print(json.dumps(active_config.model_dump(mode="json"), indent=2, sort_keys=True))
+    payload = active_config.model_dump(mode="json")
+    payload["schema_version"] = JSON_ENVELOPE_VERSION
+    print(json.dumps(payload, indent=2, sort_keys=True))
     return 0
 
 
@@ -718,6 +724,7 @@ def _cmd_rules(args: argparse.Namespace) -> int:
         )
 
     catalog = RuleCatalogReport(
+        schema_version=JSON_ENVELOPE_VERSION,
         rule_set_version=rule_set_version(),
         total_rules=len(entries),
         rules=entries,
@@ -736,6 +743,69 @@ def _cmd_rules(args: argparse.Namespace) -> int:
     return 0
 
 
+def _load_command_config(
+    args: argparse.Namespace, *, config: Config | None, json_mode: bool
+) -> Config | int:
+    """Shared config loading for compare and lock; an int is an error exit code."""
+    try:
+        return (
+            config
+            if config is not None
+            else (Config.load(Path(args.config)) if args.config else Config())
+        )
+    except FileNotFoundError:
+        return _error(CONFIG_NOT_FOUND, json_mode)
+    except (OSError, ValueError):
+        return _error(CONFIG_INVALID, json_mode)
+
+
+def _check_output_modes(args: argparse.Namespace, structured_json: bool) -> int | None:
+    # Count the raw flags: --sarif is also "structured JSON" for error payloads, but
+    # it is not a second output format when --json itself was not supplied.
+    modes = (bool(args.as_json), bool(args.markdown), bool(args.sarif))
+    if sum(modes) > 1:
+        return _error(OUTPUT_OPTIONS_CONFLICT, structured_json)
+    return None
+
+
+def _check_ignored(
+    args: argparse.Namespace, json_mode: bool, extra: Sequence[str] = ()
+) -> list[str] | int:
+    ignored = list(dict.fromkeys([*(str(item) for item in (args.ignore or [])), *extra]))
+    known = {rule.rule_id for rule in RULES}
+    if any(item not in known for item in ignored):
+        return _error(UNKNOWN_RULE_ID, json_mode)
+    return ignored
+
+
+def _command_cache(args: argparse.Namespace, config: Config, *, lock: bool) -> DownloadCache | None:
+    if args.no_cache:
+        return None
+    directory = (
+        config.lock.cache_dir or config.fetch.cache_dir or default_cache_dir()
+        if lock
+        else config.fetch.cache_dir or default_cache_dir()
+    )
+    return DownloadCache(directory)
+
+
+def _emit_rendered(
+    rendered: str,
+    *,
+    args: argparse.Namespace,
+    json_mode: bool,
+    include_disclaimer: bool,
+) -> int | None:
+    if not _emit_output(
+        rendered,
+        include_disclaimer=include_disclaimer,
+        output_path=Path(args.output) if args.output else None,
+        quiet=bool(args.quiet),
+    ):
+        return _error(OUTPUT_WRITE_FAILED, json_mode)
+    return None
+
+
 def _cmd_compare(
     args: argparse.Namespace,
     *,
@@ -748,32 +818,23 @@ def _cmd_compare(
     sarif_mode = bool(args.sarif)
     structured_json = json_mode or sarif_mode
 
-    try:
-        active_config = (
-            config
-            if config is not None
-            else (Config.load(Path(args.config)) if args.config else Config())
-        )
-    except FileNotFoundError:
-        return _error(CONFIG_NOT_FOUND, structured_json)
-    except (OSError, ValueError):
-        return _error(CONFIG_INVALID, structured_json)
+    loaded = _load_command_config(args, config=config, json_mode=structured_json)
+    if isinstance(loaded, int):
+        return loaded
+    active_config = loaded
 
-    mode_count = sum([json_mode, markdown_mode, sarif_mode])
-    if mode_count > 1:
-        return _error(OUTPUT_OPTIONS_CONFLICT, structured_json)
+    mode_error = _check_output_modes(args, structured_json)
+    if mode_error is not None:
+        return mode_error
 
-    ignored = list(dict.fromkeys(str(item) for item in (args.ignore or [])))
-    known = {rule.rule_id for rule in RULES}
-    if any(item not in known for item in ignored):
-        return _error(UNKNOWN_RULE_ID, structured_json)
+    ignored = _check_ignored(args, structured_json)
+    if isinstance(ignored, int):
+        return ignored
 
     record_dir = _resolve_record_dir(args.record_dir, structured_json)
     if isinstance(record_dir, int):
         return record_dir
-    cache = None
-    if not args.no_cache:
-        cache = DownloadCache(active_config.fetch.cache_dir or default_cache_dir())
+    cache = _command_cache(args, active_config, lock=False)
     try:
         report, exit_code = _compare(
             str(args.old),
@@ -813,13 +874,14 @@ def _cmd_compare(
         rendered = _format_text(report)
         include_disclaimer = True
 
-    if not _emit_output(
+    emit_error = _emit_rendered(
         rendered,
+        args=args,
+        json_mode=structured_json,
         include_disclaimer=include_disclaimer,
-        output_path=Path(args.output) if args.output else None,
-        quiet=bool(args.quiet),
-    ):
-        return _error(OUTPUT_WRITE_FAILED, structured_json)
+    )
+    if emit_error is not None:
+        return emit_error
 
     for warning in report["warnings"]:
         print(f"warning: {_one_line(warning)}", file=sys.stderr)
@@ -839,37 +901,23 @@ def _cmd_lock(
     sarif_mode = bool(args.sarif)
     structured_json = json_mode or sarif_mode
 
-    try:
-        active_config = (
-            config
-            if config is not None
-            else (Config.load(Path(args.config)) if args.config else Config())
-        )
-    except FileNotFoundError:
-        return _error(CONFIG_NOT_FOUND, structured_json)
-    except (OSError, ValueError):
-        return _error(CONFIG_INVALID, structured_json)
+    loaded = _load_command_config(args, config=config, json_mode=structured_json)
+    if isinstance(loaded, int):
+        return loaded
+    active_config = loaded
 
-    mode_count = sum([json_mode, markdown_mode, sarif_mode])
-    if mode_count > 1:
-        return _error(OUTPUT_OPTIONS_CONFLICT, structured_json)
+    mode_error = _check_output_modes(args, structured_json)
+    if mode_error is not None:
+        return mode_error
     if args.plan and (sarif_mode or markdown_mode):
         return _error(OUTPUT_OPTIONS_CONFLICT, structured_json)
 
     config_ignored = active_config.lock.ignored
-    ignored = list(
-        dict.fromkeys(
-            [
-                *(str(item) for item in (args.ignore or [])),
-                *(item.rule for item in config_ignored),
-            ]
-        )
-    )
+    ignored = _check_ignored(args, structured_json, tuple(item.rule for item in config_ignored))
+    if isinstance(ignored, int):
+        return ignored
     reasons = {item.rule: item.reason for item in config_ignored}
     fail_on = Severity(args.fail_on) if args.fail_on else active_config.lock.fail_on
-    known = {rule.rule_id for rule in RULES}
-    if any(item not in known for item in ignored):
-        return _error(UNKNOWN_RULE_ID, structured_json)
     if args.plan and (args.baseline or args.update_baseline):
         return _error(BASELINE_WITH_PLAN, structured_json)
     if args.plan and args.record_dir:
@@ -887,9 +935,7 @@ def _cmd_lock(
     record_dir = _resolve_record_dir(args.record_dir, structured_json)
     if isinstance(record_dir, int):
         return record_dir
-    cache = None
-    if not args.no_cache:
-        cache = DownloadCache(active_config.lock.cache_dir or default_cache_dir())
+    cache = _command_cache(args, active_config, lock=True)
     try:
         if args.plan:
             _plan, plan_data, lock_exit = _lock_plan(
@@ -905,13 +951,14 @@ def _cmd_lock(
             else:
                 rendered = format_lock_plan_text(_plan)
                 include_disclaimer = True
-            if not _emit_output(
+            emit_error = _emit_rendered(
                 rendered,
+                args=args,
+                json_mode=structured_json,
                 include_disclaimer=include_disclaimer,
-                output_path=Path(args.output) if args.output else None,
-                quiet=bool(args.quiet),
-            ):
-                return _error(OUTPUT_WRITE_FAILED, structured_json)
+            )
+            if emit_error is not None:
+                return emit_error
             return lock_exit
 
         lock_report, lock_exit = _lock(
@@ -954,13 +1001,14 @@ def _cmd_lock(
         rendered = format_lock_text(lock_report)
         include_disclaimer = True
 
-    if not _emit_output(
+    emit_error = _emit_rendered(
         rendered,
+        args=args,
+        json_mode=structured_json,
         include_disclaimer=include_disclaimer,
-        output_path=Path(args.output) if args.output else None,
-        quiet=bool(args.quiet),
-    ):
-        return _error(OUTPUT_WRITE_FAILED, structured_json)
+    )
+    if emit_error is not None:
+        return emit_error
     return lock_exit
 
 
@@ -977,6 +1025,7 @@ def _cmd_export_dataset(args: argparse.Namespace) -> int:
 
     if json_mode:
         summary = {
+            "schema_version": JSON_ENVELOPE_VERSION,
             "run_id": result.run_id,
             "directory": str(result.directory),
             "record_count": result.record_count,
@@ -1005,6 +1054,7 @@ def _cmd_validate_dataset(args: argparse.Namespace) -> int:
         return _error(DATASET_RECORD_INVALID, json_mode)
 
     payload = {
+        "schema_version": JSON_ENVELOPE_VERSION,
         "ok": report.ok,
         "record_count": report.record_count,
         "errors": [
@@ -1837,10 +1887,8 @@ def _sarif_invocation(notifications: list[dict[str, Any]]) -> list[dict[str, Any
 def _format_compare_sarif(report: CompareReport) -> dict[str, Any]:
     """Build a valid SARIF v2.1.0 document from a single package CompareReport."""
     rule_ids = sorted({item["rule_id"] for item in report["findings"]})
-    explanations = report["explanations"] or {
-        rid: ExplanationOut(why_it_matters=copy[0], common_benign_causes=copy[1])
-        for rid, copy in explanations_for(tuple(rule_ids)).items()
-    }
+    # --explain is forced for SARIF, so the report already carries the explanations.
+    explanations = report["explanations"]
     families = families_by_rule_id()
 
     sarif_rules: list[dict[str, Any]] = []
@@ -2079,8 +2127,9 @@ def _format_lock_sarif(report: LockReport) -> dict[str, Any]:
                 },
                 "invocations": _sarif_invocation(notifications),
                 "properties": {
-                    "old_lockfile": report["old_lockfile"],
-                    "new_lockfile": target_lockfile,
+                    # CI workspaces are operator data: publish names, not absolute paths.
+                    "old_lockfile": Path(report["old_lockfile"]).name,
+                    "new_lockfile": Path(target_lockfile).name,
                     "analysis_incomplete": report["analysis_incomplete"],
                     "unanalysed": report["unanalysed"],
                     "findings_omitted": findings_omitted,
@@ -2110,7 +2159,7 @@ def _sarif_result(
         "locations": [
             {
                 "physicalLocation": {
-                    "artifactLocation": {"uri": target_lockfile},
+                    "artifactLocation": {"uri": Path(target_lockfile).name},
                     "region": {"startLine": 1},
                 }
             }
@@ -2167,15 +2216,15 @@ def _format_rules_markdown(catalog: RuleCatalogReport) -> str:
 
 
 def _resolve_record_dir(value: str | None, json_mode: bool) -> Path | int | None:
-    """None means no recording; an int is an exit code already reported."""
+    """Validate the operator path without creating it; ``record_pair`` mkdirs on write.
+
+    Creating a directory before the rest of the command validates leaves artifacts
+    behind after an early error (bad spec, digest mismatch, etc.).
+    """
     if value is None:
         return None
     path = Path(value)
     if path.exists() and not path.is_dir():
-        return _error(RECORD_DIR_INVALID, json_mode)
-    try:
-        path.mkdir(parents=True, exist_ok=True)
-    except OSError:
         return _error(RECORD_DIR_INVALID, json_mode)
     return path
 
@@ -2194,7 +2243,11 @@ def _error(
     else:
         print(code, file=sys.stderr)
     if json_mode:
-        payload: dict[str, Any] = {"error": code, "measured": False}
+        payload: dict[str, Any] = {
+            "schema_version": JSON_ENVELOPE_VERSION,
+            "error": code,
+            "measured": False,
+        }
         if argument:
             payload["argument"] = argument
         if parse_problems:

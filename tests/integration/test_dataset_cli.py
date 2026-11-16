@@ -53,6 +53,7 @@ def test_export_then_validate_round_trips(
     captured = capsys.readouterr()
     assert code == 0, captured.err
     summary = json.loads(captured.out)
+    assert summary["schema_version"] == 1
     assert summary["record_count"] == 1
     path = Path(summary["directory"]) / "dataset.jsonl"
     assert path.is_file()
@@ -60,7 +61,9 @@ def test_export_then_validate_round_trips(
     code = cli.main(["validate-dataset", "--path", str(path), "--json"])
     captured = capsys.readouterr()
     assert code == 0, captured.err
-    assert json.loads(captured.out)["ok"] is True
+    validation = json.loads(captured.out)
+    assert validation["ok"] is True
+    assert validation["schema_version"] == 1
 
 
 def test_export_with_no_records_is_a_stable_code(

@@ -247,7 +247,7 @@ def test_digest_mismatch_exits_two_with_a_stable_code(
 
     assert code == 2
     assert err.strip() == "DIGEST_MISMATCH"
-    assert json.loads(out) == {"error": "DIGEST_MISMATCH", "measured": False}
+    assert json.loads(out) == {"error": "DIGEST_MISMATCH", "measured": False, "schema_version": 1}
 
 
 def test_unknown_version_exits_two(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

@@ -205,11 +205,22 @@ def test_info_findings_are_reported_but_never_alert() -> None:
     assert len(result.contributing_findings) == 1
 
 
-def test_rule_version_splits_two_groups_of_the_same_rule_id() -> None:
+def test_rule_versions_share_one_group_and_report_the_latest() -> None:
+    # SPEC §5 groups by rule_id; a mixed-version run must not double-count.
     findings = [_finding("A_RULE", version=1), _finding("A_RULE", version=2, line=2)]
     result = _score(findings)
-    assert len(result.breakdown) == 2
-    assert {item.rule_version for item in result.breakdown} == {1, 2}
+    assert len(result.breakdown) == 1
+    assert result.breakdown[0].rule_version == 2
+    assert result.score == int(20 * 1.5)
+
+
+def test_corroboration_evals_the_active_base_weight_not_the_severity_rank() -> None:
+    # SPEC §5's bar is base >= 20; a re-weighted "high" below it must not earn a boost.
+    config = ScoringConfig(severity={"high": 10}, weights_version="test")
+    findings = [_finding("A_RULE"), _finding("B_RULE")]
+
+    assert _score(findings, config=config).boosts == ()
+    assert [item.name for item in _score(findings).boosts] == ["multi_capability"]
 
 
 @st.composite

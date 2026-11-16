@@ -21,6 +21,7 @@ from pkgwatch.rules import rule_set_version
 from pkgwatch.rules.family4_metadata import DEPENDENCY_ADDED, REPOSITORY_URL_CHANGED
 
 LOCK_JSON_SCHEMA_VERSION = 4
+PLAN_JSON_SCHEMA_VERSION = 1
 
 # One short report: findings per pair are capped in text mode unless --verbose.
 FINDINGS_PER_PAIR_LIMIT = 10
@@ -121,6 +122,7 @@ class PlanNewOut(TypedDict):
 
 
 class PlanOut(TypedDict):
+    schema_version: int
     lockfile_versions: dict[str, int]
     changed_pairs: list[PlanPairOut]
     new_packages: list[PlanNewOut]
@@ -496,6 +498,7 @@ def _one_line(text: str) -> str:
 def build_plan_json(plan: LockPlan) -> PlanOut:
     """The ``--plan`` document: the plan sections, and nothing else (no analysis yet)."""
     return PlanOut(
+        schema_version=PLAN_JSON_SCHEMA_VERSION,
         lockfile_versions={
             "old": plan.old_lockfile_version,
             "new": plan.new_lockfile_version,

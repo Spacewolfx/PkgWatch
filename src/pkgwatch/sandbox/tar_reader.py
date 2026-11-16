@@ -44,6 +44,16 @@ def plan_tar(
             for info in archive:
                 check_deadline(deadline)
                 _add_member(builder, info, limits)
+                # Composed AFTER pkgwatch's own checks: an extra stdlib layer for
+                # absolute paths, device nodes and unsafe link targets.
+                try:
+                    tarfile.data_filter(info, ".")
+                except tarfile.FilterError:
+                    reject(
+                        RejectionCode.UNSUPPORTED_MEMBER_TYPE,
+                        "stdlib tar data filter rejected member",
+                        offending_path=info.name,
+                    )
     except ArchiveRejected:
         raise
     except (tarfile.TarError, gzip.BadGzipFile, EOFError, zlib.error) as exc:

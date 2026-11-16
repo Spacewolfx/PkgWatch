@@ -21,7 +21,7 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -29,7 +29,12 @@ from pathlib import Path
 from typing import Any, Protocol, cast
 
 from pkgwatch.config import Config
-from pkgwatch.fetch.cache import DownloadCache, ExpectedDigest, digest_matches
+from pkgwatch.fetch.cache import (
+    DownloadCache,
+    ExpectedDigest,
+    digest_matches,
+    digest_matches_file,
+)
 from pkgwatch.models import Ecosystem
 from pkgwatch.version import UnsupportedVersion
 from pkgwatch.version import parse as parse_version
@@ -418,10 +423,13 @@ def _artifact(
         config=config,
     )
     path.write_bytes(body)
-    # Verify the bytes that actually landed in the temp file, not the response object.
-    digest_method = verify_digest(path.read_bytes(), dist)
+    # Verify the bytes that actually landed in the temp file, in bounded chunks so a
+    # 64 MiB artifact is not held in memory twice.
+    if not digest_matches_file(path, expected):
+        raise FetchError(FetchErrorCode.DIGEST_MISMATCH)
+    digest_method = expected.method
     if cache is not None:
-        cache.put(expected, body)
+        cache.put_quietly(expected, body)
     return VersionArtifact(
         version=version,
         path=path,
@@ -432,11 +440,21 @@ def _artifact(
     )
 
 
-def _fetch_bytes(client: HttpClient, url: str, *, cap: int, config: Config) -> bytes:
-    """One logical GET, following redirects only while they stay on the registry host."""
+def fetch_bytes(
+    client: HttpClient,
+    url: str,
+    *,
+    cap: int,
+    config: Config,
+    allowed: Callable[[str], bool],
+) -> bytes:
+    """One logical GET, following redirects only while ``allowed`` accepts the URL.
+
+    Shared by npm and PyPI: the host allow-list is the only ecosystem-specific part.
+    """
     current = url
     for _ in range(config.fetch.max_redirects + 1):
-        if not is_registry_url(current):
+        if not allowed(current):
             raise FetchError(FetchErrorCode.REDIRECT_REJECTED)
         response = client.get(
             current,
@@ -455,6 +473,11 @@ def _fetch_bytes(client: HttpClient, url: str, *, cap: int, config: Config) -> b
             raise FetchError(FetchErrorCode.REDIRECT_REJECTED)
         current = urllib.parse.urljoin(current, location)
     raise FetchError(FetchErrorCode.REDIRECT_REJECTED)
+
+
+def _fetch_bytes(client: HttpClient, url: str, *, cap: int, config: Config) -> bytes:
+    """npm variant: registry host only, for both the document and the tarball."""
+    return fetch_bytes(client, url, cap=cap, config=config, allowed=is_registry_url)
 
 
 def _header(headers: Mapping[str, str], name: str) -> str | None:

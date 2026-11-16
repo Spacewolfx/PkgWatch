@@ -39,7 +39,7 @@ checks every row below against the registry, so this table cannot drift from the
 | `PYPI_SHELL_EXEC_ADDED` | capability | high | 2 | an added `os.system(`, `os.popen(` or `subprocess.` use in a `.py` file |
 | `PYPI_EVAL_EXEC_ADDED` | capability | high | 1 | an added `eval(`, `exec(` or `__import__(` call in a `.py` file |
 | `PYPI_NET_ACCESS_ADDED` | capability | medium | 1 | an added `import`/`from` of `socket`, `urllib`, `requests`, `http.client` or `http`, or a `urllib.request` call |
-| `PYPI_ENV_ENUM_ADDED` | capability | low | 2 | an added `os.environ`, `os.getenv(` or `getenv(` read |
+| `PYPI_ENV_ENUM_ADDED` | capability | low | 2 | an added whole-mapping `os.environ` read (iteration, `keys()`, `dict()`, etc.); single-key `getenv(` reads are ignored (operator decision 2026-11-16) |
 | `PYPI_DEPENDENCY_ADDED` | metadata | low | 1 | a `Requires-Dist` name added in the shipped `PKG-INFO`/`METADATA` (never registry data) |
 
 All six PyPI rules are disjoint from the npm rules by ecosystem: a rule only runs for

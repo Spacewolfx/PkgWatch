@@ -26,15 +26,19 @@ from pathlib import Path
 from typing import Any, cast
 
 from pkgwatch.config import Config
-from pkgwatch.fetch.cache import DownloadCache, ExpectedDigest, digest_matches
+from pkgwatch.fetch.cache import (
+    DownloadCache,
+    ExpectedDigest,
+    digest_matches_file,
+)
 from pkgwatch.fetch.npm import (
-    REDIRECT_STATUSES,
     UNKNOWN_PUBLISHED_AT,
     FetchError,
     FetchErrorCode,
     FetchPair,
     HttpClient,
     VersionArtifact,
+    fetch_bytes,
 )
 from pkgwatch.models import Ecosystem
 from pkgwatch.version import UnsupportedVersion
@@ -373,11 +377,11 @@ def _artifact(
         config=config,
     )
     path.write_bytes(body)
-    # Verify the bytes that actually landed in the temp file, not the response object.
-    if not digest_matches(path.read_bytes(), expected):
+    # Verify the bytes that actually landed in the temp file, in bounded chunks.
+    if not digest_matches_file(path, expected):
         raise FetchError(FetchErrorCode.DIGEST_MISMATCH)
     if cache is not None:
-        cache.put(expected, body)
+        cache.put_quietly(expected, body)
     return VersionArtifact(
         version=version,
         path=path,
@@ -405,28 +409,5 @@ def _published_at(file_entry: Mapping[str, Any]) -> datetime:
 
 
 def _fetch_bytes(client: HttpClient, url: str, *, cap: int, config: Config) -> bytes:
-    """One logical GET, following redirects only while they stay on the allow-list."""
-    current = url
-    for _ in range(config.fetch.max_redirects + 1):
-        if not is_pypi_url(current):
-            raise FetchError(FetchErrorCode.REDIRECT_REJECTED)
-        response = client.get(
-            current,
-            user_agent=config.fetch.user_agent,
-            timeout=config.fetch.request_timeout_seconds,
-            max_bytes=cap + 1,
-        )
-        if response.status not in REDIRECT_STATUSES:
-            if response.status != 200:
-                raise FetchError(FetchErrorCode.HTTP_ERROR)
-            if len(response.body) > cap:
-                raise FetchError(FetchErrorCode.SIZE_LIMIT_EXCEEDED)
-            return response.body
-        location = next(
-            (value for key, value in response.headers.items() if key.casefold() == "location"),
-            None,
-        )
-        if location is None:
-            raise FetchError(FetchErrorCode.REDIRECT_REJECTED)
-        current = urllib.parse.urljoin(current, location)
-    raise FetchError(FetchErrorCode.REDIRECT_REJECTED)
+    """PyPI variant: HTTPS on the PyPI host allow-list, for every redirect hop."""
+    return fetch_bytes(client, url, cap=cap, config=config, allowed=is_pypi_url)

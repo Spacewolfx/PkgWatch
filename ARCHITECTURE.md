@@ -338,9 +338,10 @@ must be visible in the data).
 | Dataset schema | pytest | export validates against `DatasetRecord`; no raw text in features; no package in two splits; `rule_derived` excluded from test metrics — built and run (M3) |
 | Structural | pytest | §5 import/SQL/exec greps |
 
-Current gate: **1034 passed, 1 skipped** (a Windows symlink-creation property case that the OS
+Current gate: **1041 passed, 1 skipped** (a Windows symlink-creation property case that the OS
 denies without Developer Mode), `ruff format --check` + `ruff check` clean, `mypy --strict src/`
-clean over 52 source files. Detection quality is a separate, unmet obligation: severities and
+clean over 64 source files. The suite is run with a deliberately long temp root so the
+Windows `MAX_PATH` cache-key regression stays covered. Detection quality is a separate, unmet obligation: severities and
 weights are initial untuned values, every report says `measured: false`, and the README states
 it in the disclaimer, in Limitations and in the per-ecosystem / per-family rule coverage table.
 

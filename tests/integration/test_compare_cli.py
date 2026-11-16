@@ -362,7 +362,7 @@ def test_digest_mismatch_on_the_new_side_exits_two(
 
     assert code == 2
     assert err.strip() == "DIGEST_MISMATCH"
-    assert json.loads(out) == {"error": "DIGEST_MISMATCH", "measured": False}
+    assert json.loads(out) == {"error": "DIGEST_MISMATCH", "measured": False, "schema_version": 1}
     assert len(registry.requests) == 3
 
 

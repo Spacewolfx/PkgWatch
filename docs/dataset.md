@@ -96,9 +96,9 @@ Writes `data/dataset/<run_id>/`:
   `feature_catalog_sha256` and `records_sha256`.
 - `label_conflicts.jsonl` — always present, empty when there are none.
 
-`run_id` is `UTC-compact-timestamp + "-" + sha256(canonical manifest)[:8]`; the manifest never
-contains `run_id`. Two identical exports in the same second collide by design, and a colliding
-run directory is refused with `EXPORT_RUN_EXISTS`, never overwritten.
+`run_id` is `sha256(canonical manifest)[:16]`; the manifest never contains `run_id`. The clock
+is never read, so identical inputs collide deterministically and a colliding run directory is
+refused with `EXPORT_RUN_EXISTS`, never overwritten.
 
 Records that disagree on `(schema_version, rule_set_version, weights_version, config_sha256,
 experimental)` are refused with `DATASET_RECORD_INHOMOGENEOUS`: two analyses under different

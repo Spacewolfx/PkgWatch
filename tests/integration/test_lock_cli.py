@@ -324,7 +324,7 @@ def test_too_many_pairs_exits_two_instead_of_truncating(
 
     assert code == 2
     assert err.strip() == "TOO_MANY_PAIRS"
-    assert json.loads(out) == {"error": "TOO_MANY_PAIRS", "measured": False}
+    assert json.loads(out) == {"error": "TOO_MANY_PAIRS", "measured": False, "schema_version": 1}
     assert client.requests == []
 
 
@@ -675,6 +675,7 @@ def test_a_missing_new_lockfile_names_the_argument_in_json_mode_too(
         "error": "LOCKFILE_NOT_FOUND",
         "argument": "--new",
         "measured": False,
+        "schema_version": 1,
     }
     assert client.requests == []
 
@@ -712,6 +713,7 @@ def test_plan_json_reports_the_plan_sections(
 
     assert code == 0
     assert client.requests == []
+    assert payload["schema_version"] == 1
     assert payload["lockfile_versions"] == {"old": 3, "new": 3}
     assert payload["changed_pairs"] == [
         {"name": "installer-pkg", "old_version": OLD, "new_version": NEW}

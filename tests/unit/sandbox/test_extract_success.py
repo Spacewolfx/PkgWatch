@@ -6,8 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from pkgwatch.models import ArchiveFormat, ManifestKind, SandboxLimits
+from pkgwatch.models import ArchiveFormat, ManifestKind, RejectionCode, SandboxLimits
 from pkgwatch.sandbox import extract_archive
+from pkgwatch.sandbox.errors import ArchiveRejected
 from tests.support.archives import Entry, make_tar
 
 
@@ -138,7 +139,7 @@ def test_non_empty_target_is_refused(tmp_path: Path) -> None:
     assert not (target / "pkg").exists()
 
 
-def test_target_symlink_is_replaced_not_followed(tmp_path: Path) -> None:
+def test_target_symlink_is_refused_not_followed(tmp_path: Path) -> None:
     outside = tmp_path / "outside"
     outside.mkdir()
     target = tmp_path / "root"
@@ -147,12 +148,34 @@ def test_target_symlink_is_replaced_not_followed(tmp_path: Path) -> None:
     except (OSError, NotImplementedError):
         pytest.skip(
             "OS denies symlink creation (Windows Developer Mode or admin required); "
-            "the replaced-not-followed property cannot be exercised here"
+            "the not-followed property cannot be exercised here"
         )
 
     archive = make_tar(tmp_path / "pkg.tgz", [Entry("pkg/a.py", data=b"x")])
-    extract_archive(archive, target, SandboxLimits())
+    with pytest.raises(FileExistsError):
+        extract_archive(archive, target, SandboxLimits())
 
     assert not (outside / "pkg").exists()
-    assert (target / "pkg" / "a.py").read_bytes() == b"x"
-    assert not target.is_symlink()
+    assert target.is_symlink()
+
+
+def test_archive_changing_between_plan_and_materialize_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pkgwatch.sandbox import extract as extract_module
+
+    original = extract_module.sha256_file
+    calls: list[str] = []
+
+    def changing(path: Path) -> str:
+        value = original(path)
+        calls.append(value)
+        return "0" * 64 if len(calls) == 2 else value
+
+    monkeypatch.setattr(extract_module, "sha256_file", changing)
+    archive = make_tar(tmp_path / "pkg.tgz", [Entry("pkg/a.py", data=b"x")])
+
+    with pytest.raises(ArchiveRejected) as caught:
+        extract_archive(archive, tmp_path / "root", SandboxLimits())
+
+    assert caught.value.rejection.reason_code is RejectionCode.DIGEST_MISMATCH

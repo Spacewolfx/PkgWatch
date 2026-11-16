@@ -84,19 +84,32 @@ def test_finding_uid_is_stable_and_version_sensitive() -> None:
     assert first.finding_uid != make_finding(rule_version=2).finding_uid
 
 
-def test_finding_rejects_oversized_details() -> None:
-    with pytest.raises(ValidationError):
-        make_finding(details={"note": "x" * 100})
+def test_finding_clips_oversized_details() -> None:
+    # A long package-controlled value must not turn a rule into RULE_ENGINE_ERROR
+    # via a pydantic ValidationError (analysis_incomplete would be an evasion path).
+    finding = make_finding(details={"note": "x" * 100})
+
+    assert len(str(finding.details["note"])) == 64
+    assert str(finding.details["note"]).endswith("\u2026")
 
 
-def test_release_requires_http_url() -> None:
+def test_rejection_detail_sanitises_control_characters() -> None:
+    rejection = SandboxRejection(reason_code="ARCHIVE_TRUNCATED", detail="bad\x1b[31m\ntext")
+
+    assert "\x1b" not in rejection.detail
+    assert "\n" not in rejection.detail
+    assert "?" in rejection.detail
+
+
+@pytest.mark.parametrize("url", ["file:///etc/passwd", "http://example.invalid/pkg.tgz"])
+def test_release_requires_https_url(url: str) -> None:
     with pytest.raises(ValidationError):
         Release(
             ecosystem="npm",
             package_name="left-pad",
             version="1.0.0",
             published_at=datetime(2024, 1, 1, tzinfo=UTC),
-            tarball_url="file:///etc/passwd",
+            tarball_url=url,
             sha256="a" * 64,
             size=1,
             source_endpoint="https://registry.npmjs.org/left-pad",

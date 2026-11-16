@@ -342,9 +342,16 @@ missing along the dotted path, `{"state": "null"}` when it is explicitly JSON nu
 stay `{"state": "present", "value": {}}`; nested objects such as `devDependencies`,
 `engines`, and `scripts` are not stringified.
 
-On exit 2 in `--json` mode the object is `{"error": "<CODE>", "measured": false}`; an
-`analysis_incomplete` error also carries `"parse_problems": ["manifest" | "budget" | …]`.
-The stable code is also printed on stderr.
+On exit 2 in `--json` mode the object is
+`{"schema_version": 1, "error": "<CODE>", "measured": false}`; an `analysis_incomplete`
+error also carries `"parse_problems": ["manifest" | "budget" | …]`, and lockfile errors
+carry `"argument": "--old" | "--new"` instead of a path. The stable code is also printed
+on stderr.
+
+Every other machine-readable output carries the same `schema_version: 1` envelope field:
+`config-check`, `rules --as-json`, `lock --plan --json`, `export-dataset --json` and
+`validate-dataset --json`. The two report schemas keep their own versions: compare `3`,
+lock `4`. SARIF v2.1.0 is governed by its own standard and has no extra field.
 
 ### SARIF output
 
@@ -369,12 +376,34 @@ a tool failure.
 
 Errors print a stable code, never an exception message (those can contain package text):
 
-`INVALID_SPEC`, `INVALID_PACKAGE_NAME`, `INVALID_VERSION`, `PACKAGE_MISMATCH`,
-`REGISTRY_DOC_INVALID`, `VERSION_NOT_FOUND`, `TARBALL_URL_INVALID`, `REDIRECT_REJECTED`,
-`SIZE_LIMIT_EXCEEDED`, `HTTP_ERROR`, `FETCH_FAILED`, `DIGEST_MISMATCH`, `DIGEST_MISSING`,
-`DIGEST_UNSUPPORTED`, `ARTIFACT_UNAVAILABLE`, every sandbox rejection code in SPEC §6.5,
-`ANALYSIS_INCOMPLETE`, `UNKNOWN_RULE_ID`, `INTERNAL_ERROR`. A malformed manifest is recorded as the parse problem
-`MANIFEST_INVALID_JSON`. `analysis_incomplete` never exits 0.
+- **Invocation / config:** `INVALID_SPEC`, `INVALID_PACKAGE_NAME`, `INVALID_VERSION`,
+  `PACKAGE_MISMATCH`, `CONFIG_NOT_FOUND`, `CONFIG_INVALID`, `CONFIG_WRITE_FAILED`,
+  `OUTPUT_OPTIONS_CONFLICT`, `OUTPUT_WRITE_FAILED`, `RECORD_DIR_INVALID`,
+  `RECORD_OPTIONS_CONFLICT`, `UNKNOWN_RULE_ID`, `INTERNAL_ERROR`.
+- **Fetch / digest:** `REGISTRY_DOC_INVALID`, `VERSION_NOT_FOUND`, `TARBALL_URL_INVALID`,
+  `REDIRECT_REJECTED`, `SIZE_LIMIT_EXCEEDED`, `HTTP_ERROR`, `FETCH_FAILED`,
+  `DIGEST_MISMATCH`, `DIGEST_MISSING`, `DIGEST_UNSUPPORTED`, `ARTIFACT_UNAVAILABLE`.
+- **Sandbox:** every rejection code in SPEC §6.5 (e.g. `PATH_TRAVERSAL`, `FILE_TOO_LARGE`,
+  `DEADLINE_EXCEEDED`, `DIGEST_MISMATCH`).
+- **Lockfiles / baseline:** `LOCKFILE_NOT_FOUND`, `LOCKFILE_PERMISSION_DENIED`,
+  `LOCKFILE_NOT_UTF8`, `LOCKFILE_READ_FAILED`, `LOCKFILE_TOO_LARGE`,
+  `LOCKFILE_DEPTH_EXCEEDED`, `LOCKFILE_INVALID_JSON`, `LOCKFILE_DUPLICATE_KEY`,
+  `LOCKFILE_INVALID_FORMAT`, `LOCKFILE_UNSUPPORTED_VERSION`, `TOO_MANY_PAIRS`,
+  `BASELINE_NOT_FOUND`, `BASELINE_INVALID`, `BASELINE_REASON_REQUIRED`,
+  `BASELINE_WRITE_FAILED`, `BASELINE_WITH_PLAN`, `INTEGRITY_CHANGED`. Skipped-entry
+  reasons (`INVALID_ENTRY`, `INVALID_NAME`, `INVALID_VERSION`, `INVALID_SOURCE`,
+  `UNSUPPORTED_PATH`, `DUPLICATE_ENTRY`, `LINK_SOURCE`, `MISSING_RESOLVED`, `GIT_SOURCE`,
+  `FILE_SOURCE`, `HTTP_SOURCE`, `OTHER_HOST`, `MULTIPLE_VERSIONS`,
+  `PAIR_SOURCE_UNSUPPORTED`) are reported in the plan, not printed as top-level errors.
+- **Records / datasets / labels:** `ANALYSIS_INCOMPLETE`, `RECORD_WRITE_FAILED`,
+  `EXPORT_NO_RECORDS`, `EXPORT_RUN_EXISTS`, `DATASET_RECORD_INVALID`,
+  `DATASET_INCOMPLETE_RECORD`, `DATASET_DUPLICATE_PAIR`, `DATASET_RECORD_INHOMOGENEOUS`,
+  `DATASET_FEATURE_INVALID`, `DATASET_METRIC_INELIGIBLE`, `DATASET_SPLIT_CONFLICT`,
+  `DATASET_SPLIT_MISMATCH`, `LABEL_CSV_INVALID`, `LABEL_VALUE_INVALID`,
+  `HUMAN_LABEL_DUPLICATE`, `ADVISORY_JSON_INVALID`.
+
+A malformed manifest is recorded as the parse problem `MANIFEST_INVALID_JSON`.
+`analysis_incomplete` never exits 0.
 
 ## Lockfile parsing and planning
 
@@ -463,11 +492,15 @@ output does not depend on which pair finishes first.
 
 Tarballs are cached under the user cache directory (`%LOCALAPPDATA%\pkgwatch\cache` on
 Windows, `~/Library/Caches/pkgwatch` on macOS, `$XDG_CACHE_HOME/pkgwatch` elsewhere), keyed
-by the digest the registry advertised and the bytes were verified against. Every read
-re-verifies that digest; a corrupt entry is deleted and fetched again. The cache is never
-placed inside the repository unless `[lock].cache_dir` (lock) or `[fetch].cache_dir`
-(compare) explicitly says so. `compare` shares the same cache for npm and PyPI artifacts;
-`--no-cache` disables it for one run. Transient
+by the digest the registry advertised and the bytes were verified against. The on-disk
+key is a fixed 32-hex hash of that digest (a raw sha512 filename overflowed Windows
+`MAX_PATH`), with the algorithm kept as a directory component; every read re-verifies the
+digest and a corrupt entry is deleted and fetched again. Writes are guarded per key so
+concurrent workers do not duplicate downloads, and a cache I/O failure is always a miss —
+it never changes the verdict or exit code. The cache is never placed inside the repository
+unless `[lock].cache_dir` (lock) or `[fetch].cache_dir` (compare) explicitly says so.
+`compare` shares the same cache for npm and PyPI artifacts; `--no-cache` disables it for
+one run. Transient
 failures (429, 5xx, timeouts) are retried with capped exponential backoff, `Retry-After`
 is honoured, and each request waits `[lock].request_delay_seconds` to stay polite.
 

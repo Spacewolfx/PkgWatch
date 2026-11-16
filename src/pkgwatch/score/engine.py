@@ -19,6 +19,8 @@ from pkgwatch.models import (
 )
 
 SCORE_MAX = 100
+# SPEC §5's numeric corroboration bar, evaluated against the active base weight.
+_CAPABILITY_BASE_MIN = 20
 _SEVERITY_RANK = {
     Severity.INFO: 0,
     Severity.LOW: 1,
@@ -49,20 +51,20 @@ def _count_weight(instances: int, scoring: ScoringConfig) -> float:
 
 
 def _boosts(
-    groups: Mapping[tuple[str, int], Sequence[Finding]],
+    groups: Mapping[str, Sequence[Finding]],
     families: Mapping[str, frozenset[RuleFamily]],
     scoring: ScoringConfig,
 ) -> list[ScoreBoost]:
     """Corroboration, not volume: each boost applies once, however many rules earn it.
 
-    "base >= high" is the SPEC §5 bar for a capability worth corroborating, read from the
-    active weights rather than hard-coded so a re-weighted ``w2`` stays coherent.
+    SPEC §5's "base >= 20" bar is evaluated against the active weight table, so a
+    re-weighted severity can move a rule across it without editing this function.
     """
-    rule_ids = {rule_id for rule_id, _ in groups}
+    rule_ids = set(groups)
     capability_rules = {
         rule_id
-        for (rule_id, _), members in groups.items()
-        if _SEVERITY_RANK[_worst(members)] >= _SEVERITY_RANK[Severity.HIGH]
+        for rule_id, members in groups.items()
+        if _base(_worst(members), scoring) >= _CAPABILITY_BASE_MIN
     }
 
     def in_family(family: RuleFamily) -> set[str]:
@@ -99,22 +101,23 @@ def score(
     rule_set_version: str,
 ) -> ScoreResult:
     """Group by rule, decay by count, boost on corroboration, clamp to ``[0, 100]``."""
-    groups: dict[tuple[str, int], list[Finding]] = {}
+    # SPEC §5 groups by rule_id only; rule_version is reported, never a second group.
+    groups: dict[str, list[Finding]] = {}
     for finding in findings:
-        groups.setdefault((finding.rule_id, finding.rule_version), []).append(finding)
+        groups.setdefault(finding.rule_id, []).append(finding)
 
     breakdown: list[ScoreContribution] = []
     subtotal_sum = 0.0
-    for key in sorted(groups):
-        members = sorted(groups[key], key=_order)
+    for rule_id in sorted(groups):
+        members = sorted(groups[rule_id], key=_order)
         base = _base(_worst(members), scoring)
         weight = _count_weight(len(members), scoring)
         contribution = base * weight
         subtotal_sum += contribution
         breakdown.append(
             ScoreContribution(
-                rule_id=key[0],
-                rule_version=key[1],
+                rule_id=rule_id,
+                rule_version=max(item.rule_version for item in members),
                 base=base,
                 count_weight=weight,
                 subtotal=contribution,
@@ -126,7 +129,7 @@ def score(
     total = max(0, min(SCORE_MAX, round(raw)))
 
     contributing = tuple(
-        finding for key in sorted(groups) for finding in sorted(groups[key], key=_order)
+        finding for rule_id in sorted(groups) for finding in sorted(groups[rule_id], key=_order)
     )
     return ScoreResult(
         score=total,

@@ -63,7 +63,8 @@ def extract_archive(
     """Safely unpack ``archive_path`` into ``target_dir``.
 
     Raises ``ArchiveRejected`` on the first violated rule and ``FileExistsError``
-    if ``target_dir`` already contains files.
+    if ``target_dir`` already exists (including a symlink). Nothing already at the
+    target is ever unlinked or followed.
     """
     archive = Path(os.path.abspath(archive_path))
     if not archive.is_file():
@@ -92,6 +93,14 @@ def extract_archive(
     target = Path(os.path.abspath(target_dir))
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix=".tmp-", dir=target.parent))
+
+    # The archive is opened twice (plan, then materialize). If the bytes changed in
+    # between, the validated plan no longer describes what would be written.
+    if sha256_file(archive) != archive_sha256:
+        reject(
+            RejectionCode.DIGEST_MISMATCH,
+            "archive changed between validation and extraction",
+        )
 
     budget = WriteBudget(limit=limits.max_total_uncompressed_bytes)
     try:
@@ -200,10 +209,9 @@ def materialize_hardlinks(
 
 
 def _commit(temporary: Path, target: Path) -> None:
-    if target.is_symlink() or target.is_file():
-        target.unlink()
-    elif target.exists():
-        if any(target.iterdir()):
-            raise FileExistsError(f"target directory is not empty: {target}")
-        target.rmdir()
+    # Never unlink a caller-supplied path: check-then-unlink-then-rename is a race that
+    # can be turned into arbitrary file replacement. Production callers pass a fresh
+    # path inside their own tempdir, so refusing an existing target is sufficient.
+    if target.exists() or target.is_symlink():
+        raise FileExistsError(f"target already exists: {target}")
     os.replace(temporary, target)

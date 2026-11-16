@@ -99,6 +99,55 @@ def test_pypi_algorithms_round_trip(
     assert digest_matches(payload, expected) is True
 
 
+def test_key_is_fixed_length_and_fits_windows_paths() -> None:
+    # A raw sha512 key was 128 chars; with a long Windows cache root that overflowed
+    # MAX_PATH on os.replace. The derived key stays short regardless of algorithm.
+    expected = _expected(b"synthetic tarball bytes")
+    directory = Path("C:/long-cache") / ("d" * 180)
+    path = DownloadCache(directory).path_for(expected)
+
+    assert len(path.name) <= 40
+    assert len(str(path)) < 260
+    assert "sha512" in path.parts
+
+
+def test_concurrent_puts_and_gets_return_the_verified_bytes(tmp_path: Path) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    payload = b"synthetic tarball bytes"
+    cache = DownloadCache(tmp_path / "cache")
+    expected = _expected(payload)
+
+    def worker(_: int) -> bytes | None:
+        cache.put(expected, payload)
+        return cache.get(expected)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(worker, range(8)))
+
+    assert all(result == payload for result in results)
+
+
+def test_an_unknown_algorithm_is_rejected_not_downgraded_to_sha1(tmp_path: Path) -> None:
+    cache = DownloadCache(tmp_path / "cache")
+    unknown = ExpectedDigest(method="md5", algorithm="md5", hexdigest="0" * 32)
+
+    with pytest.raises(ValueError, match="unsupported digest algorithm"):
+        cache.put(unknown, b"synthetic tarball bytes")
+
+
+def test_put_quietly_never_lets_cache_io_change_a_verdict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom(self: DownloadCache, expected: ExpectedDigest, data: bytes) -> None:
+        raise OSError("cache disk full")
+
+    monkeypatch.setattr(DownloadCache, "put", boom)
+    cache = DownloadCache(tmp_path / "cache")
+
+    cache.put_quietly(_expected(b"synthetic tarball bytes"), b"synthetic tarball bytes")
+
+
 def test_the_default_cache_dir_is_absolute_and_can_be_overridden(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

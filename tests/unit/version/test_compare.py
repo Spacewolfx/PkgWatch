@@ -58,13 +58,18 @@ def test_npm_release_precedence_ignores_build_against_prerelease() -> None:
         ("1.9", "2!1.0"),
         ("1.0a1", "1.0a1.post1"),
         ("1.0a1.dev1", "1.0a1"),
-        ("1.0", "1.0+local"),
-        ("1.0+local.1", "1.0+local.2"),
     ],
 )
 def test_pypi_precedence(lower: str, higher: str) -> None:
     assert compare(pypi(lower), pypi(higher)) < 0
     assert compare(pypi(higher), pypi(lower)) > 0
+
+
+def test_pypi_local_version_is_ignored_for_precedence() -> None:
+    # SPEC §6.4: local labels are provenance, not ordering.
+    assert compare(pypi("1.0"), pypi("1.0+local")) == 0
+    assert compare(pypi("1.0+local.1"), pypi("1.0+local.2")) == 0
+    assert pypi("1.0+local.1").canonical != pypi("1.0+local.2").canonical
 
 
 def test_pypi_zero_padding_is_precedence_equal() -> None:

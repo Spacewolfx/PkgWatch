@@ -260,7 +260,13 @@ registry document) and is experimental-gated by the runner, exactly like npm's
 | `PYPI_SHELL_EXEC_ADDED` | 2 capability | `high` | `os.system(`, `os.popen(`, `subprocess.` over ADDED `.py` lines |
 | `PYPI_EVAL_EXEC_ADDED` | 2 capability | `high` | `eval(`, `exec(`, `__import__(` over ADDED `.py` lines (lookbehind rejects member access and longer identifiers) |
 | `PYPI_NET_ACCESS_ADDED` | 2 capability | `medium` | `import`/`from` of `socket`, `urllib`, `requests`, `http.client`, `http`, and the `urllib.request` attribute, over ADDED `.py` lines |
-| `PYPI_ENV_ENUM_ADDED` | 2 capability | `low` | `os.environ`, `os.getenv(`, `getenv(` over ADDED `.py` lines |
+| `PYPI_ENV_ENUM_ADDED` | 2 capability | `low` | whole-mapping reads of `os.environ` (iteration, `keys()`, `values()`, `items()`, `dict()`, `json.dumps()`, etc.) over ADDED `.py` lines; single-key reads are ignored |
+
+**Operator decision (2026-11-16, scope clarification, not measured):** `os.getenv(` and
+bare `getenv(` are deliberately **not** matched. Each names one key, which is ordinary
+configuration; the rule targets reads of the whole environment. The earlier table wording
+listing those spellings was over-broad. `rule_version` stays 2 because the detection
+semantics have not changed.
 | `PYPI_DEPENDENCY_ADDED` | 4 metadata | `low` | `Requires-Dist` names added in the new tree's `PKG-INFO`/`METADATA` vs the old tree's; one package-level finding per added name |
 
 ## 5. Score — weights and computation

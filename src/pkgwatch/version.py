@@ -218,20 +218,13 @@ def _parse_pypi(text: str) -> ParsedVersion:
     dev: Any = int(match.group("dev_n") or 0) if has_dev else _INF
 
     local_raw = match.group("local")
-    local: Any
-    if local_raw is None:
-        local = _NEG_INF
-    else:
-        local = tuple(
-            (int(segment), "") if segment.isdigit() else (_NEG_INF, segment.lower())
-            for segment in re.split(r"[-_.]", local_raw)
-        )
 
-    # Precedence key: trailing zero release segments are insignificant (1.0 == 1.0.0).
+    # Precedence key: trailing zero release segments are insignificant (1.0 == 1.0.0),
+    # and SPEC §6.4 ignores the local version for precedence. It is kept in ``canonical``.
     trimmed = list(release)
     while len(trimmed) > 1 and trimmed[-1] == 0:
         trimmed.pop()
-    key: tuple[Any, ...] = (epoch, tuple(trimmed), pre, post, dev, local)
+    key: tuple[Any, ...] = (epoch, tuple(trimmed), pre, post, dev)
 
     canonical = _pypi_canonical(epoch, release, pre_key, post, dev, local_raw)
     return ParsedVersion(ecosystem=Ecosystem.PYPI, text=text, canonical=canonical, key=key)

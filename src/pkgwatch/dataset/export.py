@@ -2,8 +2,9 @@
 
 The exporter is the only place where a label decision is attached to an analysis. It reads
 record files written by the CLI seams, never a database, and it never touches the network:
-advisory labels are operator-supplied local JSON. Nothing here reads the clock except the
-single ``now`` used to name the run.
+advisory labels are operator-supplied local JSON. Nothing here reads the clock: the run
+id is derived from the manifest digest alone, so identical inputs collide deterministically
+instead of producing near-duplicate datasets seconds apart.
 """
 
 from __future__ import annotations
@@ -14,7 +15,6 @@ import sys
 from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -59,7 +59,6 @@ def export_dataset(
     records: Path,
     labels: Path,
     out: Path,
-    now: datetime | None = None,
 ) -> ExportResult:
     """Join labels, assign splits and write ``<out>/<run_id>/``. Offline, always."""
     paths = sorted(records.glob("*.json"))
@@ -142,14 +141,11 @@ def export_dataset(
         label_counts=label_counts,
         split_counts=split_counts,
     )
-    stamp = (now if now is not None else datetime.now(UTC)).strftime("%Y%m%dT%H%M%SZ")
-    run_id = f"{stamp}-{digest_of(manifest)[:8]}"
+    run_id = digest_of(manifest)[:16]
     target = out / run_id
-    if target.exists():
-        raise DatasetError("EXPORT_RUN_EXISTS")
-
     try:
         out.mkdir(parents=True, exist_ok=True)
+        # Rely on mkdir() raising FileExistsError: exists()-then-mkdir() is a TOCTOU.
         target.mkdir()
         _write_jsonl(target / "dataset.jsonl", (item.model_dump_json() for item in exported))
         (target / "manifest.json").write_bytes(canonical_json(manifest) + b"\n")
@@ -160,6 +156,8 @@ def export_dataset(
                 for item in sorted(conflicts, key=lambda item: item["identity"])
             ),
         )
+    except FileExistsError:
+        raise DatasetError("EXPORT_RUN_EXISTS") from None
     except OSError:
         raise DatasetError("RECORD_WRITE_FAILED") from None
 

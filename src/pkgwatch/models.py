@@ -34,6 +34,15 @@ _FEATURE_CATEGORY_RE = re.compile(r"^[A-Za-z0-9_.:/*@+\-]{1,48}$")
 _DETAIL_KEY_MAX = 64
 _DETAIL_VALUE_MAX = 64
 
+
+def _printable_cap(value: str) -> str:
+    """One printable line, bounded: package text must not inject control characters."""
+    cleaned = "".join("?" if ord(ch) < 0x20 or ord(ch) == 0x7F else ch for ch in value)
+    if len(cleaned) <= EVIDENCE_MAX_CHARS:
+        return cleaned
+    return cleaned[: EVIDENCE_MAX_CHARS - 1] + "\u2026"
+
+
 FeatureValue = int | float | bool | str
 
 
@@ -222,8 +231,10 @@ class ObfuscationLimits(BaseModel):
 
 def _validate_url(value: str) -> str:
     parsed = urlparse(value)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ValueError("must be an absolute http(s) URL")
+    # TB2: a persisted release may only carry an HTTPS URL on a known host. The
+    # fetch layer additionally enforces the host allow-list for every redirect hop.
+    if parsed.scheme != "https" or not parsed.netloc:
+        raise ValueError("must be an absolute https URL")
     return value
 
 
@@ -293,19 +304,14 @@ class SandboxRejection(BaseModel):
     @field_validator("detail")
     @classmethod
     def _cap_detail(cls, value: str) -> str:
-        if len(value) <= EVIDENCE_MAX_CHARS:
-            return value
-        return value[: EVIDENCE_MAX_CHARS - 1] + "\u2026"
+        return _printable_cap(value)
 
     @field_validator("offending_path")
     @classmethod
     def _sanitise_path(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        cleaned = "".join("?" if ord(ch) < 0x20 or ord(ch) == 0x7F else ch for ch in value)
-        if len(cleaned) > EVIDENCE_MAX_CHARS:
-            return cleaned[: EVIDENCE_MAX_CHARS - 1] + "\u2026"
-        return cleaned
+        return _printable_cap(value)
 
 
 class ManifestEntry(BaseModel):
@@ -367,19 +373,23 @@ class Finding(BaseModel):
     @field_validator("evidence")
     @classmethod
     def _cap_evidence(cls, value: str) -> str:
-        if len(value) <= EVIDENCE_MAX_CHARS:
-            return value
-        return value[: EVIDENCE_MAX_CHARS - 1] + "\u2026"
+        return _printable_cap(value)
 
     @field_validator("details")
     @classmethod
     def _small_details(cls, value: dict[str, str | int | float | bool]) -> dict[str, Any]:
+        # Package-controlled values (e.g. a Requires-Dist name) must never turn a rule
+        # into RULE_ENGINE_ERROR -> analysis_incomplete. Clip rather than raise, exactly
+        # as ``evidence`` does; keys stay bounded so the record remains indexable.
+        clipped: dict[str, Any] = {}
         for key, item in value.items():
             if len(key) > _DETAIL_KEY_MAX:
                 raise ValueError(f"detail key too long: {key[:32]!r}")
             if isinstance(item, str) and len(item) > _DETAIL_VALUE_MAX:
-                raise ValueError(f"detail value too long for {key!r}")
-        return value
+                clipped[key] = item[: _DETAIL_VALUE_MAX - 1] + "\u2026"
+            else:
+                clipped[key] = item
+        return clipped
 
     @model_validator(mode="after")
     def _line_range(self) -> Finding:
@@ -652,9 +662,7 @@ class ParseError(BaseModel):
     @field_validator("detail")
     @classmethod
     def _cap_detail(cls, value: str) -> str:
-        if len(value) <= EVIDENCE_MAX_CHARS:
-            return value
-        return value[: EVIDENCE_MAX_CHARS - 1] + "…"
+        return _printable_cap(value)
 
 
 class AstSide(StrEnum):

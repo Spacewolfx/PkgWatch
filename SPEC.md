@@ -1,6 +1,6 @@
 # pkgwatch — SPEC
 
-Version 0.3.0 · compare schema_version 3 · lock schema_version 4 · store schema_version 1 ·
+Version 0.3.1 · compare schema_version 3 · lock schema_version 4 · store schema_version 1 ·
 weights_version `w1` · rule_set_version computed from the registry (§5)
 
 Normative for milestones M1–M4. Where this document says *verified*, it means probed from

@@ -5,6 +5,45 @@ All notable changes to pkgwatch are documented here. The format is kept close to
 states whether its detection quality was measured — most is not, and nothing here is proof
 of malicious behaviour.
 
+## 0.3.1 — 2026-11-16
+
+Hardening release. No rule logic, score weights or detection claims changed: the recorded
+installer pair still scores 94 with the same four findings, the benign pair scores 0, and
+the rule set version stays `810fa2b88188`. Detection quality remains unmeasured. Static
+analysis only; no package content is executed.
+
+### Fixed
+
+- Download cache keys are now a fixed 32-hex hash of the verified registry digest, so a
+  sha512 key no longer overflows Windows `MAX_PATH`. Writes are guarded per key; cache I/O
+  failures are misses and never change a verdict or exit code. Reads re-verify the file in
+  bounded chunks instead of holding a second full copy in memory, and unrecognised digest
+  algorithms are rejected rather than silently downgraded to SHA-1.
+- Long package-controlled `details` values are clipped instead of raising, closing an
+  `analysis_incomplete` evasion path. Detail, evidence and path text is sanitised to one
+  printable line.
+- Score corroboration evaluates the configured base weight (SPEC §5's `base >= 20`) and
+  groups findings by `rule_id` only; PyPI local versions are ignored for precedence as
+  specified, while remaining in the canonical form.
+- The sandbox composes the stdlib tar data filter after its own checks, re-hashes the
+  archive between planning and materialisation, and refuses an existing extraction target
+  instead of unlinking a caller-supplied path.
+- Dataset `run_id` is derived from the manifest digest alone, so identical inputs collide
+  deterministically; `mkdir()` now detects collisions without a check-then-create race.
+
+### Added / Changed
+
+- Every simple JSON output (config check, rule catalog, lock plan, dataset export and
+  validation, and error payloads) carries `schema_version: 1`. The compare (`3`) and lock
+  (`4`) report schemas are unchanged.
+- SARIF emits lockfile basenames instead of absolute operator paths, and the unused
+  explanation fallback was removed.
+- Compare and lock share their config/mode/ignore/cache/output setup; record directories
+  are created only when a record is actually written.
+- SPEC §4.5.2 records the operator decision that `getenv` spellings are intentionally not
+  matched by `PYPI_ENV_ENUM_ADDED` (one key is configuration, not whole-environment reads).
+- Documentation lists every stable error code and the current gate figures.
+
 ## 0.3.0 — 2026-11-15
 
 Turns the pairs `compare` and `lock` already analyse into a sound, reproducible,

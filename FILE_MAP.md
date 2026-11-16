@@ -9,7 +9,7 @@ pkgwatch/
 ├─ README.md                 usage, live examples, limitations
 ├─ SPEC.md                   normative contract (schemas, rules, split)
 ├─ ARCHITECTURE.md           module boundaries, flow, M3/M4 status
-├─ CHANGELOG.md              0.3.0 release notes
+├─ CHANGELOG.md              0.3.1 release notes
 ├─ LICENSE                   MIT, "pkgwatch contributors"
 ├─ pyproject.toml            packaging, dependencies, pytest/ruff/mypy
 ├─ uv.lock                   locked dependencies

@@ -5,6 +5,23 @@ All notable changes to pkgwatch are documented here. The format is kept close to
 states whether its detection quality was measured — most is not, and nothing here is proof
 of malicious behaviour.
 
+## Unreleased
+
+Documentation-only change. No code, rule logic, score weights or detection claims changed;
+detection quality remains unmeasured.
+
+### Documentation
+
+- `ARCHITECTURE.md` and `FILE_MAP.md` moved under `docs/` with history preserved; references
+  in README, SPEC, CHANGELOG and the file map now use their new paths.
+- Added `docs/README.md` as the documentation index, `CONTRIBUTING.md` (setup, gates, how to
+  add a rule or ecosystem) and `BUILD.md` (build wheel/sdist, verify artifacts, version bumps,
+  publishing status).
+- Topic guides (`ci.md`, `dataset.md`, `pypi.md`, `rules.md`) link back to the index, and
+  `ci.md` points to the build guide.
+- Refreshed file/module counts and the architecture "at a glance" overview; build outputs
+  were verified with `uv build`.
+
 ## 0.3.1 — 2026-11-16
 
 Hardening release. No rule logic, score weights or detection claims changed: the recorded

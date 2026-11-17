@@ -1,5 +1,7 @@
 # PyPI support
 
+[← Documentation index](README.md)
+
 `pkgwatch compare` supports PyPI exact versions. This is the user-facing companion to
 the PyPI sections of [SPEC.md](../SPEC.md) (§3, §4.5.2, §9.2) and [rules.md](rules.md).
 

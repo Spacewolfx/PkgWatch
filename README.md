@@ -762,9 +762,12 @@ uv run ruff check .
 uv run ruff format --check .
 ```
 
-- Design: [ARCHITECTURE.md](ARCHITECTURE.md)
+- Contributing: [CONTRIBUTING.md](docs/CONTRIBUTING.md)
+- Building a wheel or sdist: [BUILD.md](docs/BUILD.md)
+- All docs: [docs/README.md](docs/README.md)
+- Design: [ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- File-by-file map: [FILE_MAP.md](docs/FILE_MAP.md)
 - Rules, score weights, record schema, endpoints, operator decisions: [SPEC.md](SPEC.md)
-- Raw gate logs: [docs/](docs/)
 - Licence: [MIT](LICENSE)
 
 © 2026 pkgwatch contributors

@@ -14,6 +14,21 @@ package pair (`compare`) or two lockfiles (`lock`) and get a report and an exit 
 polling, storage and dataset halves below are documented as designed, not as built; §8
 lists which checkpoints are actually proven.
 
+This document explains *why* the code is shaped this way and which halves are implemented.
+For a per-file inventory, see [FILE_MAP.md](FILE_MAP.md); for the normative contract the
+code pins itself to, see [SPEC.md](../SPEC.md).
+
+## At a glance
+
+| Question | Answer |
+|---|---|
+| What runs today? | `compare` (npm + PyPI), `lock` (npm lockfiles), and dataset export via `--record-dir` |
+| What is designed but not built? | The batch polling pipeline (`ingest/`), automatic `store/` writes; the offline model layer was dropped |
+| Where can an alert come from? | `rules/` only — nothing else may raise, suppress or change an alert |
+| Riskiest surface? | `sandbox/`: every archive member is validated before any member is written |
+| Are detections measured? | No. Every report says `measured: false`; severities and weights are initial values |
+| Current gates | 1041 passed, 1 skipped; `mypy --strict src/` and both ruff checks clean |
+
 Two commitments shape the whole design:
 
 1. **The rule engine is the source of truth for alerts.** Nothing outside the rule engine
@@ -270,7 +285,7 @@ must be visible in the data).
   `rule_id@rule_version` set, so adding or versioning a rule is visible in every report.
 - Seeds fixed for the splitter and for any sampling. No wall-clock, no `hash()`, no dict
   ordering in any computed output — `hash()` is randomized per process, so the splitter uses
-  `sha256` (§ SPEC §6.3). The one clock on the implemented path is the baseline writer's
+  `sha256` (SPEC §6.3). The one clock on the implemented path is the baseline writer's
   acknowledged date, which is data, not a match key.
 - Findings, file-change lists and feature dicts are emitted in sorted key order; JSON dumps
   use `sort_keys=True`. The same two tarballs in → the same `ScoreResult` bytes out, which
@@ -341,9 +356,10 @@ must be visible in the data).
 Current gate: **1041 passed, 1 skipped** (a Windows symlink-creation property case that the OS
 denies without Developer Mode), `ruff format --check` + `ruff check` clean, `mypy --strict src/`
 clean over 64 source files. The suite is run with a deliberately long temp root so the
-Windows `MAX_PATH` cache-key regression stays covered. Detection quality is a separate, unmet obligation: severities and
-weights are initial untuned values, every report says `measured: false`, and the README states
-it in the disclaimer, in Limitations and in the per-ecosystem / per-family rule coverage table.
+Windows `MAX_PATH` cache-key regression stays covered. Detection quality is a separate, unmet
+obligation: severities and weights are initial untuned values, every report says
+`measured: false`, and the README states it in the disclaimer, in Limitations and in the
+per-ecosystem / per-family rule coverage table.
 
 Fixtures are hand-authored, defanged, and committed under `tests/fixtures/`. They are
 strings a rule can match and nothing more: no live URLs, no working commands, no binaries.

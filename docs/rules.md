@@ -1,5 +1,7 @@
 # Rule catalog
 
+[← Documentation index](README.md)
+
 `pkgwatch rules [--json | --markdown] [--family FAMILY] [--rule RULE_ID] [--ecosystem npm|pypi]`
 prints this catalog from the live registry; every entry lists its families and ecosystems.
 

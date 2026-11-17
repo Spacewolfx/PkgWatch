@@ -1,5 +1,7 @@
 # Continuous integration
 
+[← Documentation index](README.md)
+
 `pkgwatch lock` fails a pull request when a dependency update changes what is installed
 or what the code does. This document describes the wiring, the trust model, and what is
 still unresolved. **The Action and the example workflow are untested on GitHub** — nothing
@@ -55,7 +57,8 @@ comment is opt-in (`comment: "true"` in the action's `with:`) and requires
 Licensed under MIT (see `LICENSE`). No PyPI package is published yet; the publishing
 path is TODO: choose an index, publish, and pin the SHAs in `action.yml` and the example
 workflow by full commit hash. Until then the action installs pkgwatch from its own
-checkout (`python -m pip install "$GITHUB_ACTION_PATH"`).
+checkout (`python -m pip install "$GITHUB_ACTION_PATH"`). See [BUILD.md](BUILD.md) for
+the build and version-bump procedure.
 
 ## Limitations
 

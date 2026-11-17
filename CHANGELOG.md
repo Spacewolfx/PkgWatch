@@ -256,7 +256,7 @@ unmeasured; findings are signals for human review.
 - `compare` warns when a same-package diff produced no changed file, which used to be a
   silent no-op.
 - Documentation: README gained a SARIF section, a `--config` row for `compare`, a case
-  study, and honest coverage/limitation notes; `ARCHITECTURE.md` describes what is actually
+  study, and honest coverage/limitation notes; `docs/ARCHITECTURE.md` describes what is actually
   built; SPEC §9 records the operator decisions behind this release (1–19).
 - Default User-Agent is `pkgwatch/0.2.0`, and a test now pins `pyproject.toml`,
   `pkgwatch.__version__` and the default User-Agent to the same version.

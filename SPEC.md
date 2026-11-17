@@ -40,8 +40,8 @@ In scope:
 
 ## 3. Trust boundaries and data flow
 
-See ARCHITECTURE.md §2–§3 for the diagram and the five boundaries. This section pins the
-external coordinates each boundary touches.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) §2–§3 for the diagram and the five
+boundaries. This section pins the external coordinates each boundary touches.
 
 **Verified endpoints** (probed 2026-11-05, status in parentheses):
 

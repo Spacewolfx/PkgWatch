@@ -1,6 +1,25 @@
 # pkgwatch file map
 
-353 tracked files, including this map; roughly 13,000 lines of Python under `src/`.
+A map of the repository's tracked files and what each one is for: 353 files, of which
+64 Python modules (~11,300 lines) live under `src/pkgwatch/`.
+
+For usage start at [README.md](../README.md), for design and trust boundaries at
+[ARCHITECTURE.md](ARCHITECTURE.md), and for the normative contract at
+[SPEC.md](../SPEC.md). This file answers only "where does X live and why".
+
+## Find it fast
+
+| I want to... | Go to |
+|---|---|
+| Change CLI flags, output formats or exit codes | `src/pkgwatch/cli.py` |
+| Add or edit a detection rule | `src/pkgwatch/rules/` + `tests/fixtures/rules/` |
+| Change how archives are unpacked | `src/pkgwatch/sandbox/` |
+| Change registry URLs, retries or the download cache | `src/pkgwatch/fetch/` |
+| Change scoring or weights | `src/pkgwatch/score/engine.py` |
+| Work on records, features, labels or splits | `dataset/`, `features/`, `labeling/` |
+| Work on SQLite state | `src/pkgwatch/store/` |
+| Debug npm lockfile analysis | `lockfile/`, `lock/` |
+| Add a contributor guide or doc | `docs/` (start at `docs/README.md`) |
 
 ## Repository root
 
@@ -8,7 +27,6 @@
 pkgwatch/
 ├─ README.md                 usage, live examples, limitations
 ├─ SPEC.md                   normative contract (schemas, rules, split)
-├─ ARCHITECTURE.md           module boundaries, flow, M3/M4 status
 ├─ CHANGELOG.md              0.3.1 release notes
 ├─ LICENSE                   MIT, "pkgwatch contributors"
 ├─ pyproject.toml            packaging, dependencies, pytest/ruff/mypy
@@ -27,6 +45,7 @@ src/pkgwatch/
 ├─ config.py                 TOML configuration and defaults
 ├─ models.py                 shared data models (Diff, Finding, AstLimits, ...)
 ├─ version.py                version parsing and comparison
+├─ py.typed                  PEP 561 marker: type hints ship with the package
 │
 ├─ fetch/                    registry access
 │  ├─ npm.py                 npm metadata + tarball
@@ -135,6 +154,11 @@ tests/
 
 ```
 docs/
+├─ README.md                 index of all documentation
+├─ BUILD.md                  build wheel/sdist, verify artifacts, version bumps
+├─ CONTRIBUTING.md           safety rules, setup, gates, how to add a rule or ecosystem
+├─ ARCHITECTURE.md           module boundaries, trust boundaries, data flow, M1–M4 status
+├─ FILE_MAP.md               this file — repository layout, file by file
 ├─ ci.md                     GitHub Action / CI usage
 ├─ dataset.md                record → label → export pipeline
 ├─ pypi.md                   PyPI behaviour and limits
@@ -160,4 +184,5 @@ data/
 ## Request flow
 
 `cli.py` → `fetch/` (registry) → `sandbox/` (extract) → `diff/` + `rules/` → `score/` → report.
-With `--record-dir`: `dataset/record.py` → `features/` → `labeling/` → `dataset/split.py` → `export.py` → `validate.py`.
+With `--record-dir`: `dataset/record.py` → `features/` → `labeling/` → `dataset/split.py`
+→ `export.py` → `validate.py`.

@@ -21,6 +21,11 @@ def test_defaults_match_spec() -> None:
     assert config.reproducibility.split_salt == "pkgwatch-split-v1"
 
 
+def test_split_salt_cannot_be_changed() -> None:
+    with pytest.raises(ValidationError, match="fixed by SPEC"):
+        Config.from_toml('[reproducibility]\nsplit_salt = "custom"\n')
+
+
 def test_default_toml_round_trips() -> None:
     from_toml = Config.from_toml(DEFAULT_TOML)
     assert from_toml.model_dump() == Config().model_dump()

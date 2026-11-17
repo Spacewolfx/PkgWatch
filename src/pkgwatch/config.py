@@ -10,7 +10,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from pkgwatch.models import (
     AstLimits,
@@ -125,6 +125,14 @@ class ReproducibilityConfig(BaseModel):
 
     seed: int = Field(default=1337, ge=0)
     split_salt: str = Field(default="pkgwatch-split-v1", min_length=1, max_length=64)
+
+    @field_validator("split_salt")
+    @classmethod
+    def _fixed_by_spec(cls, value: str) -> str:
+        # SPEC §6.3 pins the salt; accepting another value would silently change nothing.
+        if value != "pkgwatch-split-v1":
+            raise ValueError("split_salt is fixed by SPEC §6.3; remove this key")
+        return value
 
 
 class FetchConfig(BaseModel):

@@ -180,9 +180,11 @@ def _collect(node: ast.AST, prefix: str, out: ModuleSymbols) -> None:
             for alias in child.names:
                 out.imports.setdefault(alias.name, child.lineno)
         elif isinstance(child, ast.ImportFrom):
-            module = child.module or ""
+            # Keep the relative level: `from . import x` is not `import x`.
+            module = "." * child.level + (child.module or "")
             for alias in child.names:
-                dotted = f"{module}.{alias.name}" if module else alias.name
+                separator = "." if module and not module.endswith(".") else ""
+                dotted = f"{module}{separator}{alias.name}"
                 out.imports.setdefault(dotted, child.lineno)
         else:
             _collect(child, prefix, out)

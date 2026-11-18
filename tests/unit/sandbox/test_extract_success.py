@@ -179,3 +179,4 @@ def test_archive_changing_between_plan_and_materialize_is_rejected(
         extract_archive(archive, tmp_path / "root", SandboxLimits())
 
     assert caught.value.rejection.reason_code is RejectionCode.DIGEST_MISMATCH
+    assert not list(tmp_path.glob(".tmp-*"))

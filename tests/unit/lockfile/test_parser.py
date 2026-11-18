@@ -106,6 +106,15 @@ def test_names_come_from_nested_paths_explicit_name_or_are_rejected(tmp_path: Pa
     ]
 
 
+def test_a_link_without_a_version_is_an_unsupported_source(tmp_path: Path) -> None:
+    path = _write(tmp_path, _lock(3, {"node_modules/linked": {"link": True}}))
+    parsed = parse_lockfile(path, limits=LockConfig())
+    assert parsed.entries == ()
+    assert [(item.name, item.reason) for item in parsed.skipped] == [
+        ("linked", SkipReason.LINK_SOURCE)
+    ]
+
+
 def test_invalid_entries_are_recorded_with_stable_reasons(tmp_path: Path) -> None:
     path = _write(
         tmp_path,

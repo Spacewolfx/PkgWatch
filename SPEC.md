@@ -1,6 +1,6 @@
 # pkgwatch — SPEC
 
-Version 0.3.1 · compare schema_version 3 · lock schema_version 4 · store schema_version 1 ·
+Version 0.3.2 · compare schema_version 3 · lock schema_version 4 · store schema_version 1 ·
 weights_version `w1` · rule_set_version computed from the registry (§5)
 
 Normative for milestones M1–M4. Where this document says *verified*, it means probed from
@@ -256,7 +256,7 @@ registry document) and is experimental-gated by the runner, exactly like npm's
 
 | `rule_id` | family | severity | patterns / reads |
 |---|---|---|---|
-| `PYPI_INSTALL_HOOK_ADDED` | 1 lifecycle | `high` | ADDED lines of the new tree's build manifests matching `setuptools.setup(`, `setup(`, `[project.scripts]`, `[project.entry-points`; suppressed when the old tree's build files already declared the hook |
+| `PYPI_INSTALL_HOOK_ADDED` | 1 lifecycle | `high` | ADDED lines of the new tree's build manifests matching `setuptools.setup(`, `setup(`, `[project.scripts]`, `[project.entry-points`, and `cmdclass` install/develop/egg_info hooks; suppressed when the old tree's build files already declared the hook |
 | `PYPI_SHELL_EXEC_ADDED` | 2 capability | `high` | `os.system(`, `os.popen(`, `subprocess.` over ADDED `.py` lines |
 | `PYPI_EVAL_EXEC_ADDED` | 2 capability | `high` | `eval(`, `exec(`, `__import__(` over ADDED `.py` lines (lookbehind rejects member access and longer identifiers) |
 | `PYPI_NET_ACCESS_ADDED` | 2 capability | `medium` | `import`/`from` of `socket`, `urllib`, `requests`, `http.client`, `http`, and the `urllib.request` attribute, over ADDED `.py` lines |

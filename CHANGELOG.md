@@ -7,8 +7,42 @@ of malicious behaviour.
 
 ## Unreleased
 
-Documentation-only change. No code, rule logic, score weights or detection claims changed;
-detection quality remains unmeasured.
+No changes yet.
+
+## 0.3.2 — 2026-11-18
+
+Hardening and correctness release. No score weights changed. Detection semantics changed for a
+small set of rules, so `rule_set_version` moves from `810fa2b88188` to `9f7f24f3935e`; the
+recorded installer pair still scores 94 with the same four findings and the benign pair scores 0.
+Detection quality remains unmeasured. Static analysis only; no package content is executed.
+
+### Fixed
+
+- PyPI metadata parsing now unfolds RFC 5322 continuation lines, so a folded `Requires-Dist`
+  header can no longer hide a dependency. Python AST diffs keep the relative import level
+  (`from . import x` is no longer reported as `import x`).
+- Dataset export removes a partially written deterministic run directory on failure so a retry
+  is possible; validation now rejects mixed toolchain/config records instead of silently
+  joining them. The CLI reports non-UTF-8 dataset records as `DATASET_RECORD_INVALID` with exit 2.
+- Extraction cleans up its temporary directory on digest mismatch and re-hashes the archive
+  after materialisation; symlink targets with embedded backslashes are rejected and truncated
+  ZIPs are classified as truncated. The download cache re-verifies a corrupt entry under the
+  per-key lock before deleting it, so a concurrent valid write survives.
+- npm workspace `link` entries without a version are skipped as unsupported sources rather
+  than reported as invalid versions; lockfile baseline digests must be 64 lowercase hex chars.
+- CLI numeric arguments reject trailing junk, config init returns a deterministic exit code on
+  write failure, and Markdown escaping covers `~`.
+- Six rules now emit the same `rule_version` the registry advertises; a registry test checks
+  emitted finding versions so an exported dataset can no longer fail its own validator.
+
+### Changed — detection semantics
+
+- Capability grouping now treats equivalent spellings as one capability (dynamic eval,
+  environment enumeration, eval/exec, network imports), so switching syntax no longer looks
+  like a new capability. A `# system` comment on `from os import path` no longer fires
+  `PYPI_SHELL_EXEC_ADDED`. Dependency names are compared before being clipped to the evidence
+  cap, so a long name cannot hide an added dependency.
+- `SPEC.md` and `docs/rules.md` now list `cmdclass` install hooks alongside setup.py hooks.
 
 ### Documentation
 

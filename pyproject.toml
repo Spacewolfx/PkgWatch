@@ -1,6 +1,6 @@
 [project]
 name = "pkgwatch"
-version = "0.3.1"
+version = "0.3.2"
 description = "Package behavior diff monitor for npm and PyPI"
 readme = "README.md"
 license = { text = "MIT" }

@@ -13,6 +13,7 @@ import contextlib
 import hashlib
 import json
 import os
+import re
 import tempfile
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
@@ -228,7 +229,7 @@ def _parse_entry(raw: Any) -> BaselineEntry:
         or not rule_id
         or (path is not None and not isinstance(path, str))
         or not isinstance(evidence_hash, str)
-        or len(evidence_hash) != 64
+        or not re.fullmatch("[0-9a-f]{64}", evidence_hash)
         or not isinstance(reason, str)
         or not reason
         or not isinstance(date, str)

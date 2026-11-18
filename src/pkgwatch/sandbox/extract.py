@@ -94,16 +94,16 @@ def extract_archive(
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix=".tmp-", dir=target.parent))
 
-    # The archive is opened twice (plan, then materialize). If the bytes changed in
-    # between, the validated plan no longer describes what would be written.
-    if sha256_file(archive) != archive_sha256:
-        reject(
-            RejectionCode.DIGEST_MISMATCH,
-            "archive changed between validation and extraction",
-        )
-
     budget = WriteBudget(limit=limits.max_total_uncompressed_bytes)
     try:
+        # The archive is opened again for materialize. Check both before and after so
+        # the bytes actually written are the bytes the plan validated, and so a rejected
+        # archive still gets its temporary directory cleaned up in the finally below.
+        if sha256_file(archive) != archive_sha256:
+            reject(
+                RejectionCode.DIGEST_MISMATCH,
+                "archive changed between validation and extraction",
+            )
         if archive_format is ArchiveFormat.ZIP:
             hashes = materialize_zip(archive, entries, temporary, limits, deadline, budget)
         else:
@@ -111,6 +111,11 @@ def extract_archive(
                 archive, archive_format, entries, temporary, limits, deadline, budget
             )
         hashes.update(materialize_hardlinks(entries, temporary, limits, deadline, budget))
+        if sha256_file(archive) != archive_sha256:
+            reject(
+                RejectionCode.DIGEST_MISMATCH,
+                "archive changed during extraction",
+            )
         _commit(temporary, target)
     finally:
         if temporary.exists():

@@ -9,7 +9,7 @@ from hypothesis import strategies as st
 
 from pkgwatch.models import RejectionCode, SandboxLimits
 from pkgwatch.sandbox.errors import ArchiveRejected
-from pkgwatch.sandbox.names import normalize_member_name, within_root
+from pkgwatch.sandbox.names import normalize_member_name, resolve_symlink_target, within_root
 
 ALPHABET = "abcXYZ0123/._-\\: ~@"
 
@@ -47,6 +47,12 @@ def test_rejects_unsafe_names(name: str, code: RejectionCode, limits: SandboxLim
     with pytest.raises(ArchiveRejected) as excinfo:
         normalize_member_name(name, limits)
     assert excinfo.value.rejection.reason_code is code
+
+
+def test_a_symlink_target_with_a_backslash_is_rejected(limits: SandboxLimits) -> None:
+    with pytest.raises(ArchiveRejected) as excinfo:
+        resolve_symlink_target("pkg/link", "a\\..\\b", limits)
+    assert excinfo.value.rejection.reason_code is RejectionCode.BACKSLASH_IN_NAME
 
 
 @pytest.mark.parametrize(

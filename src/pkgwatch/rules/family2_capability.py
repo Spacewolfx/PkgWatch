@@ -54,8 +54,8 @@ _CHILD_PROCESS_PATTERNS: tuple[scan.Pattern, ...] = (
 # ``evaluate``, ``retrieval`` — and ``\s*`` between the name and its parenthesis is what keeps
 # a comment that merely names the primitive from firing.
 _DYNAMIC_EVAL_PATTERNS: tuple[scan.Pattern, ...] = (
-    scan.pattern("eval_call", r"""(?<![A-Za-z0-9_.$])eval\s*\("""),
-    scan.pattern("function_constructor", r"""\bnew\s+Function\s*\("""),
+    scan.pattern("eval_call", r"""(?<![A-Za-z0-9_.$])eval\s*\(""", capability="dynamic_eval"),
+    scan.pattern("function_constructor", r"""\bnew\s+Function\s*\(""", capability="dynamic_eval"),
 )
 
 _NET_MODULES: tuple[str, ...] = ("https", "http", "net", "tls", "dgram", "dns")
@@ -95,10 +95,12 @@ _ENV_PATTERNS: tuple[scan.Pattern, ...] = (
     scan.pattern(
         "enumerate_process_env",
         r"""Object\s*\.\s*keys\s*\(\s*process\s*\.\s*env\s*\)""",
+        capability="env_enum",
     ),
     scan.pattern(
         "serialize_process_env",
         r"""JSON\s*\.\s*stringify\s*\(\s*process\s*\.\s*env\s*\)""",
+        capability="env_enum",
     ),
 )
 
@@ -140,7 +142,7 @@ def js_child_process_added(ctx: DiffContext) -> list[Finding]:
 
 @registry.register(
     rule_id=DYNAMIC_EVAL_ADDED,
-    rule_version=1,
+    rule_version=2,
     severity="high",
     ecosystems=("npm",),
     families=(RuleFamily.DANGEROUS_CAPABILITY,),
@@ -164,7 +166,7 @@ def dynamic_eval_added(ctx: DiffContext) -> list[Finding]:
     return scan.capability_findings(
         ctx,
         rule_id=DYNAMIC_EVAL_ADDED,
-        rule_version=1,
+        rule_version=2,
         severity=Severity.HIGH,
         patterns=_DYNAMIC_EVAL_PATTERNS,
     )
@@ -239,7 +241,7 @@ def fs_write_outside_package_added(ctx: DiffContext) -> list[Finding]:
 
 @registry.register(
     rule_id=ENV_ENUMERATION_ADDED,
-    rule_version=1,
+    rule_version=2,
     severity="low",
     ecosystems=("npm",),
     families=(RuleFamily.DANGEROUS_CAPABILITY,),
@@ -263,7 +265,7 @@ def env_enumeration_added(ctx: DiffContext) -> list[Finding]:
     return scan.capability_findings(
         ctx,
         rule_id=ENV_ENUMERATION_ADDED,
-        rule_version=1,
+        rule_version=2,
         severity=Severity.LOW,
         patterns=_ENV_PATTERNS,
     )

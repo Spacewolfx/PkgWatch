@@ -27,7 +27,7 @@ code pins itself to, see [SPEC.md](../SPEC.md).
 | Where can an alert come from? | `rules/` only — nothing else may raise, suppress or change an alert |
 | Riskiest surface? | `sandbox/`: every archive member is validated before any member is written |
 | Are detections measured? | No. Every report says `measured: false`; severities and weights are initial values |
-| Current gates | 1041 passed, 1 skipped; `mypy --strict src/` and both ruff checks clean |
+| Current gates | 1057 passed, 1 skipped; `mypy --strict src/` and both ruff checks clean |
 
 Two commitments shape the whole design:
 
@@ -353,7 +353,7 @@ must be visible in the data).
 | Dataset schema | pytest | export validates against `DatasetRecord`; no raw text in features; no package in two splits; `rule_derived` excluded from test metrics — built and run (M3) |
 | Structural | pytest | §5 import/SQL/exec greps |
 
-Current gate: **1041 passed, 1 skipped** (a Windows symlink-creation property case that the OS
+Current gate: **1057 passed, 1 skipped** (a Windows symlink-creation property case that the OS
 denies without Developer Mode), `ruff format --check` + `ruff check` clean, `mypy --strict src/`
 clean over 64 source files. The suite is run with a deliberately long temp root so the
 Windows `MAX_PATH` cache-key regression stays covered. Detection quality is a separate, unmet

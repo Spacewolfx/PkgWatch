@@ -49,6 +49,7 @@ def reject_archive_error(exc: BaseException) -> NoReturn:
         "not a gzip",
         "compressed data ended",
         "empty file",
+        "not a zip file",
     )
     if isinstance(exc, EOFError) or any(marker in text for marker in truncated_markers):
         reject(RejectionCode.ARCHIVE_TRUNCATED, f"archive could not be read completely: {exc}")

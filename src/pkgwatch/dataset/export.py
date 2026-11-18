@@ -9,8 +9,10 @@ instead of producing near-duplicate datasets seconds apart.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import importlib.metadata
+import shutil
 import sys
 from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
@@ -159,6 +161,9 @@ def export_dataset(
     except FileExistsError:
         raise DatasetError("EXPORT_RUN_EXISTS") from None
     except OSError:
+        # run_id is deterministic: a half-written directory would block every retry.
+        with contextlib.suppress(OSError):
+            shutil.rmtree(target)
         raise DatasetError("RECORD_WRITE_FAILED") from None
 
     return ExportResult(

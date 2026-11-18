@@ -111,7 +111,15 @@ def parse_metadata(text: str) -> PypiMetadata:
     name = ""
     version = ""
     dependencies: dict[str, str] = {}
+    # RFC 5322 folding: a line starting with whitespace continues the previous header.
+    # Unfold before partitioning, or a folded Requires-Dist silently loses its dependency.
+    lines: list[str] = []
     for line in text.splitlines():
+        if line[:1] in (" ", "\t") and lines:
+            lines[-1] += " " + line.strip()
+        else:
+            lines.append(line)
+    for line in lines:
         header, separator, value = line.partition(":")
         if not separator:
             continue

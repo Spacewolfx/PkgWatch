@@ -109,9 +109,19 @@ class DownloadCache:
             return None
         if digest_matches(data, expected):
             return data
-        with contextlib.suppress(OSError):
-            path.unlink()
-        return None
+        # A concurrent put() may install a valid entry while we are reading. Re-check
+        # under the same lock put() uses before deleting, so a stale reader cannot
+        # remove a fresh entry and force a redundant download.
+        with self._key_lock(expected):
+            try:
+                current = path.read_bytes()
+            except OSError:
+                return None
+            if digest_matches(current, expected):
+                return current
+            with contextlib.suppress(OSError):
+                path.unlink()
+            return None
 
     def put(self, expected: ExpectedDigest, data: bytes) -> None:
         if not digest_matches(data, expected):

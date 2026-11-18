@@ -158,6 +158,11 @@ def test_load_a_missing_file_raises_a_stable_code(tmp_path: Path) -> None:
             ' "evidence_sha256": "x", "reason": "", "date": "2026-11-08"}]}',
             id="entry-with-an-empty-reason",
         ),
+        pytest.param(
+            '{"version": 1, "entries": [{"package": "p", "rule_id": "R", "path": null,'
+            ' "evidence_sha256": "' + "z" * 64 + '", "reason": "ok", "date": "2026-11-08"}]}',
+            id="entry-with-a-non-hex-digest",
+        ),
     ],
 )
 def test_load_rejects_malformed_files_with_a_stable_code(tmp_path: Path, payload: str) -> None:

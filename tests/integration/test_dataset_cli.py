@@ -89,6 +89,17 @@ def test_export_with_no_records_is_a_stable_code(
     assert not (tmp_path / "dataset").exists()
 
 
+def test_validate_reports_a_non_utf8_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "binary.jsonl"
+    path.write_bytes(b"\xff\xfe")
+    code = cli.main(["validate-dataset", "--path", str(path), "--json"])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert "DATASET_RECORD_INVALID" in captured.err
+
+
 def test_validate_reports_a_broken_file(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     path = tmp_path / "broken.jsonl"
     path.write_text("{not a record}\n", encoding="utf-8")

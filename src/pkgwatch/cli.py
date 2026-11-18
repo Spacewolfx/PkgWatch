@@ -189,7 +189,7 @@ _SARIF_SECURITY_SEVERITY_MAP: Mapping[str, str] = {
     Severity.CRITICAL.value: "9.5",
 }
 
-_INT_RE = re.compile(r"^[0-9]+$")
+_INT_RE = re.compile(r"[0-9]+")
 
 
 class FileCounts(TypedDict):
@@ -328,7 +328,7 @@ class CompareError(Exception):
 
 def _positive_int(text: str) -> int:
     # Reject "1_000", "+5", " 5", "0x10" etc. that int() would otherwise accept.
-    if not _INT_RE.match(text):
+    if not _INT_RE.fullmatch(text):
         raise argparse.ArgumentTypeError(f"expected an integer, got {text!r}")
     value = int(text)
     if value < 1:
@@ -337,7 +337,7 @@ def _positive_int(text: str) -> int:
 
 
 def _non_negative_int(text: str) -> int:
-    if not _INT_RE.match(text):
+    if not _INT_RE.fullmatch(text):
         raise argparse.ArgumentTypeError(f"expected a non-negative integer, got {text!r}")
     return int(text)
 
@@ -659,9 +659,10 @@ def _cmd_config_init(args: argparse.Namespace) -> int:
         Config.write_default(path, overwrite=args.force)
     except FileExistsError:
         print(f"refusing to overwrite {path} (use --force)", file=sys.stderr)
-        return 1
-    except OSError:
+        return 2
+    except (OSError, ValueError):
         # Path comes from the user, not from package content; no sanitization needed.
+        # ValueError covers an embedded NUL, which int()/Path accept but the OS rejects.
         return _error(CONFIG_WRITE_FAILED, False)
     print(f"wrote {path}")
     return 0
@@ -1050,7 +1051,7 @@ def _cmd_validate_dataset(args: argparse.Namespace) -> int:
     json_mode = bool(args.as_json)
     try:
         report = validate_dataset(Path(args.path))
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return _error(DATASET_RECORD_INVALID, json_mode)
 
     payload = {
@@ -1099,7 +1100,7 @@ def _emit_output(
                 handle.write(full_text)
             os.replace(temp_path, output_path)
             temp_path = None
-        except OSError:
+        except (OSError, ValueError):
             if temp_path is not None:
                 with contextlib.suppress(OSError):
                     os.unlink(temp_path)
@@ -1631,7 +1632,7 @@ def _md_escape(text: str) -> str:
     renders findings inside Markdown tables.
     """
     escaped = html.escape(_one_line(text), quote=True)
-    for char in "\\`*_[]|":
+    for char in "\\`*_[]|~":
         escaped = escaped.replace(char, f"\\{char}")
     return escaped
 

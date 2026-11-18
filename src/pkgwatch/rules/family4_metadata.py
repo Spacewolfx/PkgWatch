@@ -33,12 +33,14 @@ def _dependencies(metadata: dict[str, Any]) -> dict[str, str]:
     raw = metadata.get(DEPENDENCIES_FIELD)
     if not isinstance(raw, dict):
         return {}
-    return {_bounded(str(key)): _bounded(str(value)) for key, value in raw.items()}
+    # Keep raw names as dict keys: truncating them here makes two distinct long
+    # dependencies collide and hides a genuinely added one. Only display text is bounded.
+    return {str(key): _bounded(str(value)) for key, value in raw.items()}
 
 
 @registry.register(
     rule_id=DEPENDENCY_ADDED,
-    rule_version=1,
+    rule_version=2,
     severity="low",
     ecosystems=("npm",),
     families=(RuleFamily.METADATA,),
@@ -63,9 +65,9 @@ def dependency_added(ctx: DiffContext) -> list[Finding]:
         scan.finding(
             ctx,
             rule_id=DEPENDENCY_ADDED,
-            rule_version=1,
+            rule_version=2,
             severity=Severity.LOW,
-            evidence=f"new dependency: {name}",
+            evidence=f"new dependency: {_bounded(name)}",
             details={"dependency": name, "section": DEPENDENCIES_FIELD},
         )
         for name in sorted(set(after) - set(before))

@@ -42,9 +42,9 @@ _SHELL_PATTERNS: tuple[scan.Pattern, ...] = (
         capability="process_module",
     ),
     scan.pattern(
-        "from_os_system", r"\bfrom\s+os\s+import\b[^\n]*\bsystem\b", capability="os_system"
+        "from_os_system", r"\bfrom\s+os\s+import\b[^\n#]*\bsystem\b", capability="os_system"
     ),
-    scan.pattern("from_os_popen", r"\bfrom\s+os\s+import\b[^\n]*\bpopen\b", capability="os_popen"),
+    scan.pattern("from_os_popen", r"\bfrom\s+os\s+import\b[^\n#]*\bpopen\b", capability="os_popen"),
 )
 
 # A call whose callee is exactly one of the dynamic-code primitives. The lookbehind
@@ -53,9 +53,9 @@ _SHELL_PATTERNS: tuple[scan.Pattern, ...] = (
 # the primitive quiet. ``exec`` mirrors ``eval``; the dunder import is the same power
 # without a keyword.
 _EVAL_PATTERNS: tuple[scan.Pattern, ...] = (
-    scan.pattern("eval_call", r"""(?<![A-Za-z0-9_.$])eval\s*\("""),
-    scan.pattern("exec_call", r"""(?<![A-Za-z0-9_.])exec\s*\("""),
-    scan.pattern("dunder_import", _DUNDER_IMPORT + r"""\s*\("""),
+    scan.pattern("eval_call", r"""(?<![A-Za-z0-9_.$])eval\s*\(""", capability="eval_exec"),
+    scan.pattern("exec_call", r"""(?<![A-Za-z0-9_.])exec\s*\(""", capability="eval_exec"),
+    scan.pattern("dunder_import", _DUNDER_IMPORT + r"""\s*\(""", capability="eval_exec"),
 )
 
 # Network-capable imports, one pattern per module so the finding names which one
@@ -66,17 +66,22 @@ _NET_MODULES: tuple[str, ...] = ("socket", "urllib", "requests", "http.client")
 
 _NET_PATTERNS: tuple[scan.Pattern, ...] = (
     *(
-        scan.pattern(f"import_{module.replace('.', '_')}", rf"\bimport\s+{re.escape(module)}\b")
+        scan.pattern(
+            f"import_{module.replace('.', '_')}",
+            rf"\bimport\s+{re.escape(module)}\b",
+            capability=module,
+        )
         for module in _NET_MODULES
     ),
     *(
         scan.pattern(
             f"from_{module.replace('.', '_')}",
             rf"\bfrom\s+{re.escape(module)}\s+import\b",
+            capability=module,
         )
         for module in ("socket", "urllib", "requests", "http.client", "http")
     ),
-    scan.pattern("urllib_request", r"""urllib\.request"""),
+    scan.pattern("urllib_request", r"""urllib\.request""", capability="urllib"),
 )
 
 # Whole-environment reads only: the mapping consumed as a whole (iterated, copied,
@@ -91,7 +96,7 @@ _ENV_PATTERNS: tuple[scan.Pattern, ...] = (
 
 @registry.register(
     rule_id=PYPI_SHELL_EXEC_ADDED,
-    rule_version=2,
+    rule_version=3,
     severity="high",
     ecosystems=("pypi",),
     families=(RuleFamily.DANGEROUS_CAPABILITY,),
@@ -119,7 +124,7 @@ def pypi_shell_exec_added(ctx: DiffContext) -> list[Finding]:
     return scan.capability_findings(
         ctx,
         rule_id=PYPI_SHELL_EXEC_ADDED,
-        rule_version=2,
+        rule_version=3,
         severity=Severity.HIGH,
         patterns=_SHELL_PATTERNS,
         suffixes=scan.PYPI_SUFFIXES,
@@ -128,7 +133,7 @@ def pypi_shell_exec_added(ctx: DiffContext) -> list[Finding]:
 
 @registry.register(
     rule_id=PYPI_EVAL_EXEC_ADDED,
-    rule_version=1,
+    rule_version=2,
     severity="high",
     ecosystems=("pypi",),
     families=(RuleFamily.DANGEROUS_CAPABILITY,),
@@ -154,7 +159,7 @@ def pypi_eval_exec_added(ctx: DiffContext) -> list[Finding]:
     return scan.capability_findings(
         ctx,
         rule_id=PYPI_EVAL_EXEC_ADDED,
-        rule_version=1,
+        rule_version=2,
         severity=Severity.HIGH,
         patterns=_EVAL_PATTERNS,
         suffixes=scan.PYPI_SUFFIXES,
@@ -163,7 +168,7 @@ def pypi_eval_exec_added(ctx: DiffContext) -> list[Finding]:
 
 @registry.register(
     rule_id=PYPI_NET_ACCESS_ADDED,
-    rule_version=1,
+    rule_version=2,
     severity="medium",
     ecosystems=("pypi",),
     families=(RuleFamily.DANGEROUS_CAPABILITY,),
@@ -187,7 +192,7 @@ def pypi_net_access_added(ctx: DiffContext) -> list[Finding]:
     return scan.capability_findings(
         ctx,
         rule_id=PYPI_NET_ACCESS_ADDED,
-        rule_version=1,
+        rule_version=2,
         severity=Severity.MEDIUM,
         patterns=_NET_PATTERNS,
         suffixes=scan.PYPI_SUFFIXES,

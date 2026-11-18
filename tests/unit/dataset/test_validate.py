@@ -54,6 +54,14 @@ def test_a_duplicate_pair_is_reported(tmp_path: Path) -> None:
     assert {issue.code for issue in report.issues} == {"DATASET_DUPLICATE_PAIR"}
 
 
+def test_a_mixed_toolchain_file_is_reported(tmp_path: Path) -> None:
+    record = _dataset_record()
+    other = _dataset_record()
+    other["rule_set_version"] = record["rule_set_version"] + "-other"
+    report = validate_dataset(_write(tmp_path, record, other))
+    assert "DATASET_RECORD_INHOMOGENEOUS" in {issue.code for issue in report.issues}
+
+
 def test_a_wrong_split_is_reported(tmp_path: Path) -> None:
     record = _dataset_record()
     record["split"] = Split.TEST.value if record["split"] != Split.TEST.value else Split.TRAIN.value

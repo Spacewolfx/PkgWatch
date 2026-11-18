@@ -110,6 +110,15 @@ def test_import_additions_and_removals_are_separate_rows() -> None:
     )
 
 
+def test_relative_import_level_is_part_of_the_symbol() -> None:
+    assert sorted(_diff("import evil\n", "from . import evil\n")) == sorted(
+        [("import_removed", "old", "evil"), ("import_added", "new", ".evil")]
+    )
+    assert sorted(_diff("from .pkg import foo\n", "from ..pkg import foo\n")) == sorted(
+        [("import_removed", "old", ".pkg.foo"), ("import_added", "new", "..pkg.foo")]
+    )
+
+
 def test_a_class_body_change_is_a_remove_plus_an_add() -> None:
     changes = _diff("class C:\n    x = 1\n", "class C:\n    x = 2\n")
     assert sorted(changes) == sorted([("class_removed", "old", "C"), ("class_added", "new", "C")])

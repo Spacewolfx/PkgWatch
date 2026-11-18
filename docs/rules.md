@@ -14,7 +14,9 @@ operator decisions, initial untuned values, not measured.
 
 `Version` is the rule's `rule_version` (SPEC §4.1): it is bumped whenever detection
 semantics change, so a recorded finding can be tied to the rule that produced it. A test
-checks every row below against the registry, so this table cannot drift from the code.
+checks every row below against the registry, so this table cannot drift from the code. The
+current `rule_set_version()` is `9f7f24f3935e`; it changes whenever a rule's detection
+semantics or version change.
 
 ## npm
 
@@ -23,24 +25,24 @@ checks every row below against the registry, so this table cannot drift from the
 | `NPM_INSTALL_SCRIPT_ADDED` | lifecycle | high | 2 | an added `preinstall`/`install`/`postinstall` key in the root `package.json` |
 | `NPM_SCRIPT_INJECTION_FROM_METADATA` | lifecycle | high | 1 | an install script the registry `scripts` copy gained or changed |
 | `JS_CHILD_PROCESS_ADDED` | capability | high | 2 | an added `require("child_process")` (with or without `node:`) |
-| `DYNAMIC_EVAL_ADDED` | capability | high | 1 | an added `eval(` call or `new Function(` constructor |
+| `DYNAMIC_EVAL_ADDED` | capability | high | 2 | an added `eval(` call or `new Function(` constructor |
 | `NET_ACCESS_ADDED` | capability | medium | 2 | an added `require` of `https`, `http`, `net`, `tls`, `dgram` or `dns` |
 | `FS_WRITE_OUTSIDE_PACKAGE_ADDED` | capability | medium | 1 | an added write call whose path escapes the package via a `..` segment |
-| `ENV_ENUMERATION_ADDED` | capability | low | 1 | an added `Object.keys(process.env)` or `JSON.stringify(process.env)` |
+| `ENV_ENUMERATION_ADDED` | capability | low | 2 | an added `Object.keys(process.env)` or `JSON.stringify(process.env)` |
 | `BASE64_BLOB_PRESENT` | obfuscation | low | 1 | a long base64-like run on an added line |
 | `HIGH_ENTROPY_STRINGS` | obfuscation | low | 1 | a high-entropy string literal on an added line |
 | `HEX_ESCAPE_DENSITY` | obfuscation | low | 1 | many `\xHH` / `\uHHHH` escapes on one added line |
-| `DEPENDENCY_ADDED` | metadata | low | 1 | a dependency name added in `versions[v].dependencies` |
+| `DEPENDENCY_ADDED` | metadata | low | 2 | a dependency name added in `versions[v].dependencies` |
 | `REPOSITORY_URL_CHANGED` | metadata | medium | 1 | a changed `repository` field in the root `package.json` (normalized) |
 
 ## PyPI
 
 | Rule ID | Family | Severity | Version | Detects |
 |---|---|---|---|---|
-| `PYPI_INSTALL_HOOK_ADDED` | lifecycle | high | 2 | an added `setup(`, `setuptools.setup(`, `[project.scripts]` or `[project.entry-points` line in a build manifest (`setup.py`, `pyproject.toml`, `setup.cfg`, depth ≤ 2), unless the old tree already declared it |
-| `PYPI_SHELL_EXEC_ADDED` | capability | high | 2 | an added `os.system(`, `os.popen(` or `subprocess.` use in a `.py` file |
-| `PYPI_EVAL_EXEC_ADDED` | capability | high | 1 | an added `eval(`, `exec(` or `__import__(` call in a `.py` file |
-| `PYPI_NET_ACCESS_ADDED` | capability | medium | 1 | an added `import`/`from` of `socket`, `urllib`, `requests`, `http.client` or `http`, or a `urllib.request` call |
+| `PYPI_INSTALL_HOOK_ADDED` | lifecycle | high | 2 | an added `setup(`, `setuptools.setup(`, `[project.scripts]` or `[project.entry-points` line in a build manifest (`setup.py`, `pyproject.toml`, `setup.cfg`, depth ≤ 2), including `cmdclass` install hooks, unless the old tree already declared it |
+| `PYPI_SHELL_EXEC_ADDED` | capability | high | 3 | an added `os.system(`, `os.popen(` or `subprocess.` use in a `.py` file |
+| `PYPI_EVAL_EXEC_ADDED` | capability | high | 2 | an added `eval(`, `exec(` or `__import__(` call in a `.py` file |
+| `PYPI_NET_ACCESS_ADDED` | capability | medium | 2 | an added `import`/`from` of `socket`, `urllib`, `requests`, `http.client` or `http`, or a `urllib.request` call |
 | `PYPI_ENV_ENUM_ADDED` | capability | low | 2 | an added whole-mapping `os.environ` read (iteration, `keys()`, `dict()`, etc.); single-key `getenv(` reads are ignored (operator decision 2026-11-16) |
 | `PYPI_DEPENDENCY_ADDED` | metadata | low | 1 | a `Requires-Dist` name added in the shipped `PKG-INFO`/`METADATA` (never registry data) |
 

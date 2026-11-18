@@ -7,6 +7,7 @@ import pytest
 
 from pkgwatch.models import ArchiveFormat, RejectionCode, SandboxLimits
 from pkgwatch.sandbox import ArchiveRejected, extract_archive
+from pkgwatch.sandbox.errors import reject_archive_error
 from pkgwatch.sandbox.extract import sha256_file, sniff_archive
 from tests.support.archives import Entry, make_tar
 from tests.unit.sandbox.helpers import assert_rejected
@@ -239,6 +240,12 @@ def test_unsupported_format(tmp_path: Path) -> None:
     with pytest.raises(ArchiveRejected) as excinfo:
         extract_archive(archive, tmp_path / "root", SandboxLimits())
     assert excinfo.value.rejection.reason_code is RejectionCode.ARCHIVE_FORMAT_UNSUPPORTED
+
+
+def test_a_truncated_zip_is_reported_as_truncated() -> None:
+    with pytest.raises(ArchiveRejected) as excinfo:
+        reject_archive_error(ValueError("File is not a zip file"))
+    assert excinfo.value.rejection.reason_code is RejectionCode.ARCHIVE_TRUNCATED
 
 
 def test_truncated_archive(tmp_path: Path) -> None:

@@ -85,13 +85,33 @@ DETECTIONS = [
 
 # Widened detection bumps a rule's version; the rest stay at 1.
 EXPECTED_VERSIONS = {
-    PYPI_SHELL_EXEC_ADDED: 2,
-    PYPI_EVAL_EXEC_ADDED: 1,
-    PYPI_NET_ACCESS_ADDED: 1,
+    PYPI_SHELL_EXEC_ADDED: 3,
+    PYPI_EVAL_EXEC_ADDED: 2,
+    PYPI_NET_ACCESS_ADDED: 2,
     PYPI_ENV_ENUM_ADDED: 2,
     PYPI_INSTALL_HOOK_ADDED: 2,
     PYPI_DEPENDENCY_ADDED: 1,
 }
+
+
+def test_a_comment_naming_a_shell_entry_point_is_not_a_finding(tmp_path: Path) -> None:
+    ctx = ctx_from_files(
+        tmp_path,
+        BASE,
+        {**BASE, "demo/__init__.py": b"from os import path  # system helper\n"},
+        ecosystem=Ecosystem.PYPI,
+    )
+    assert pypi_shell_exec_added(ctx) == []
+
+
+def test_switching_eval_to_exec_is_not_a_new_capability(tmp_path: Path) -> None:
+    ctx = ctx_from_files(
+        tmp_path,
+        {**BASE, "demo/__init__.py": b"x = eval(code)\n"},
+        {**BASE, "demo/__init__.py": b"x = exec(code)\n"},
+        ecosystem=Ecosystem.PYPI,
+    )
+    assert pypi_eval_exec_added(ctx) == []
 
 
 def test_rule_metadata_matches_spec() -> None:

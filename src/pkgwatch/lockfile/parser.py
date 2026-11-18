@@ -249,24 +249,21 @@ def _parse_entry(key: str, raw: Any) -> LockEntry | SkippedEntry:
         )
 
     raw_version = raw.get("version")
+    link = raw.get("link", False)
+    if not isinstance(link, bool):
+        return SkippedEntry(name=name, version=version_display, reason=SkipReason.INVALID_ENTRY)
+    # A workspace link legitimately has no version. Report it as an unsupported source,
+    # not a malformed one (SPEC §9.1), while leaving versioned links to the normal
+    # LockEntry path that plan.py already skips.
     if not isinstance(raw_version, str):
-        return SkippedEntry(
-            name=name,
-            version=None,
-            reason=SkipReason.INVALID_VERSION,
-        )
+        reason = SkipReason.LINK_SOURCE if link else SkipReason.INVALID_VERSION
+        return SkippedEntry(name=name, version=version_display, reason=reason)
     try:
         validate_version(raw_version)
     except FetchError:
-        return SkippedEntry(
-            name=name,
-            version=version_display,
-            reason=SkipReason.INVALID_VERSION,
-        )
+        reason = SkipReason.LINK_SOURCE if link else SkipReason.INVALID_VERSION
+        return SkippedEntry(name=name, version=version_display, reason=reason)
 
-    link = raw.get("link", False)
-    if not isinstance(link, bool):
-        return SkippedEntry(name=name, version=raw_version, reason=SkipReason.INVALID_ENTRY)
     has_install_script = raw.get("hasInstallScript")
     if has_install_script is not None and not isinstance(has_install_script, bool):
         return SkippedEntry(name=name, version=raw_version, reason=SkipReason.INVALID_ENTRY)

@@ -117,6 +117,22 @@ def test_parse_metadata_name_extraction_ignores_extras_and_markers() -> None:
     assert parsed.dependencies["foo-bar"] == ""
 
 
+def test_parse_metadata_unfolds_continuation_lines() -> None:
+    # RFC 5322 folding is legal in METADATA; the folded name must still be detected.
+    text = (
+        "Metadata-Version: 2.1\n"
+        "Name: demo\n"
+        "Requires-Dist:\n"
+        " evil-pkg>=1.0\n"
+        "Requires-Dist: good-pkg>=2.0\n"
+    )
+
+    assert parse_metadata(text).dependencies == {
+        "evil-pkg": ">=1.0",
+        "good-pkg": ">=2.0",
+    }
+
+
 def test_parse_metadata_is_defensive_about_hostile_input() -> None:
     assert parse_metadata("").name == ""
     assert parse_metadata("not a header\n").dependencies == {}

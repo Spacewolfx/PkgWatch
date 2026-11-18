@@ -85,7 +85,16 @@ def test_v02_rule_ids_severities_and_versions_follow_the_operator_decision() -> 
     }
     by_id = {rule.rule_id: rule for rule in RULES}
     # Detection widened past v1 for these rules; the operator decision keeps the rest at 1.
-    bumped = {"PYPI_SHELL_EXEC_ADDED": 2, "PYPI_ENV_ENUM_ADDED": 2, "PYPI_INSTALL_HOOK_ADDED": 2}
+    bumped = {
+        "DEPENDENCY_ADDED": 2,
+        "DYNAMIC_EVAL_ADDED": 2,
+        "ENV_ENUMERATION_ADDED": 2,
+        "PYPI_SHELL_EXEC_ADDED": 3,
+        "PYPI_EVAL_EXEC_ADDED": 2,
+        "PYPI_NET_ACCESS_ADDED": 2,
+        "PYPI_ENV_ENUM_ADDED": 2,
+        "PYPI_INSTALL_HOOK_ADDED": 2,
+    }
     for rule_id, severity in expected.items():
         assert by_id[rule_id].severity is severity
         assert by_id[rule_id].rule_version == bumped.get(rule_id, 1)
@@ -120,7 +129,13 @@ def test_every_rule_ships_positive_and_negative_fixtures() -> None:
 @pytest.mark.parametrize("rule", list(RULES), ids=[rule.rule_id for rule in RULES])
 def test_positive_fixture_makes_the_rule_fire(rule: Rule, tmp_path: Path) -> None:
     ctx = _context_for(tmp_path, rule, "positive")
-    assert rule.rule_id in {finding.rule_id for finding in run_rules(ctx, experimental=True)}
+    findings = run_rules(ctx, experimental=True)
+    assert rule.rule_id in {finding.rule_id for finding in findings}
+    # A finding must report the version registered for its rule: the dataset validator
+    # cross-checks the two, and stale numbers also leak into the score breakdown.
+    assert {finding.rule_version for finding in findings if finding.rule_id == rule.rule_id} == {
+        rule.rule_version
+    }
 
 
 @pytest.mark.parametrize("rule", list(RULES), ids=[rule.rule_id for rule in RULES])

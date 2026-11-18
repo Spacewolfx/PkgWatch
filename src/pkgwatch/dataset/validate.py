@@ -25,6 +25,10 @@ from pkgwatch.models import (
 )
 from pkgwatch.rules import RULES
 
+# DatasetRecord has no config_sha256/experimental, so only the shared verifiable fields
+# can be checked for homogeneity here (export enforces the full set on AnalysisRecord).
+_HOMOGENEITY_FIELDS = ("schema_version", "rule_set_version", "weights_version")
+
 _HOLDOUT = {Split.VAL.value, Split.TEST.value}
 _KNOWN_RULES = {rule.rule_id: rule.rule_version for rule in RULES}
 
@@ -129,7 +133,14 @@ def _check_cross_record(
 ) -> None:
     seen: dict[tuple[str, str, str, str], int] = {}
     splits: dict[tuple[str, str], Split] = {}
+    first_signature: tuple[Any, ...] | None = None
     for number, record in parsed:
+        signature = tuple(getattr(record, name) for name in _HOMOGENEITY_FIELDS)
+        if first_signature is None:
+            first_signature = signature
+        elif signature != first_signature:
+            issues.append(ValidationIssue("DATASET_RECORD_INHOMOGENEOUS", number))
+
         identity = (
             record.ecosystem.value,
             record.package_name,

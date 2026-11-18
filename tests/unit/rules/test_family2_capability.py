@@ -87,11 +87,20 @@ NEAR_MISSES: list[tuple[str, Callable[[DiffContext], list[Finding]], str]] = [
 # ESM detection widened these two rules; the other three are unchanged.
 EXPECTED_VERSIONS = {
     JS_CHILD_PROCESS_ADDED: 2,
-    DYNAMIC_EVAL_ADDED: 1,
+    DYNAMIC_EVAL_ADDED: 2,
     NET_ACCESS_ADDED: 2,
     FS_WRITE_OUTSIDE_PACKAGE_ADDED: 1,
-    ENV_ENUMERATION_ADDED: 1,
+    ENV_ENUMERATION_ADDED: 2,
 }
+
+
+def test_switching_env_enumeration_spelling_is_not_a_new_capability(tmp_path: Path) -> None:
+    ctx = ctx_from_files(
+        tmp_path,
+        {**BASE, "package/base.js": b"var x = Object.keys(process.env);\n"},
+        {**BASE, "package/base.js": b"var x = JSON.stringify(process.env);\n"},
+    )
+    assert env_enumeration_added(ctx) == []
 
 
 @pytest.mark.parametrize(

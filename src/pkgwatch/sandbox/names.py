@@ -151,6 +151,14 @@ def resolve_symlink_target(member_path: str, target: str, limits: SandboxLimits)
             "symlink target contains control characters",
             offending_path=member_path,
         )
+    # Targets are POSIX root-relative. A backslash is a separator on Windows, so a
+    # target like `sub\..\..\outside` would escape once materialized there.
+    if "\\" in target:
+        reject(
+            RejectionCode.BACKSLASH_IN_NAME,
+            "symlink target contains a backslash",
+            offending_path=member_path,
+        )
     if len(target) > limits.max_entry_path_len:
         reject(
             RejectionCode.SYMLINK_TARGET_TOO_LONG,

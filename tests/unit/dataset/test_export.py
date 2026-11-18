@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from pkgwatch.dataset import export as export_module
 from pkgwatch.dataset.errors import DatasetError
 from pkgwatch.dataset.export import export_dataset
 from pkgwatch.models import DatasetRecord
@@ -65,6 +66,24 @@ def test_an_existing_run_directory_is_refused(tmp_path: Path) -> None:
     with pytest.raises(DatasetError) as excinfo:
         export_dataset(records=records, labels=tmp_path / "labels", out=out)
     assert excinfo.value.code == "EXPORT_RUN_EXISTS"
+
+
+def test_a_failed_write_leaves_the_deterministic_run_retryable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(*args: object, **kwargs: object) -> None:
+        raise OSError("disk full")
+
+    records = _records(tmp_path)
+    out = tmp_path / "out"
+    monkeypatch.setattr(export_module, "_write_jsonl", fail)
+    with pytest.raises(DatasetError) as excinfo:
+        export_dataset(records=records, labels=tmp_path / "labels", out=out)
+    assert excinfo.value.code == "RECORD_WRITE_FAILED"
+    assert not list(out.iterdir())
+
+    monkeypatch.undo()
+    assert export_dataset(records=records, labels=tmp_path / "labels", out=out).record_count == 1
 
 
 def test_incomplete_records_are_counted_and_skipped(tmp_path: Path) -> None:

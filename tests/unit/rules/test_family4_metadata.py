@@ -86,6 +86,21 @@ def test_dependency_added_reports_new_names_in_sorted_order(tmp_path: Path) -> N
     assert all(item.details["section"] == "dependencies" for item in findings)
 
 
+def test_a_long_dependency_name_is_compared_without_truncation(tmp_path: Path) -> None:
+    old_name = "a" * 100 + "X"
+    new_name = "a" * 100 + "Y"
+    ctx = ctx_from_files(
+        tmp_path,
+        OLD,
+        OLD,
+        metadata_before={"dependencies": {old_name: "1.0.0"}},
+        metadata_after={"dependencies": {new_name: "1.0.0"}},
+    )
+    findings = dependency_added(ctx)
+    assert len(findings) == 1
+    assert findings[0].details["dependency"].startswith("a" * 60)
+
+
 def test_unchanged_and_removed_dependencies_are_ignored(tmp_path: Path) -> None:
     ctx = ctx_from_files(
         tmp_path,
@@ -274,5 +289,5 @@ def test_family_four_ships_the_implemented_metadata_rules() -> None:
         "PYPI_DEPENDENCY_ADDED",
     ]
     assert [rule.severity for rule in family] == [Severity.LOW, Severity.MEDIUM, Severity.LOW]
-    assert all(rule.rule_version == 1 for rule in family)
+    assert [rule.rule_version for rule in family] == [2, 1, 1]
     assert "MAINTAINER_ADDED" not in {rule.rule_id for rule in RULES}

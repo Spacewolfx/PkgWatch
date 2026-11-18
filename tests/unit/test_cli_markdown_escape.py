@@ -23,3 +23,4 @@ def test_md_escape_still_protects_markdown_table_cells() -> None:
     assert cli._md_escape("a`b") == "a\\`b"
     assert cli._md_escape("a\\b") == "a\\\\b"
     assert cli._md_escape("*x_ [y]") == "\\*x\\_ \\[y\\]"
+    assert cli._md_escape("~~bad~~") == "\\~\\~bad\\~\\~"

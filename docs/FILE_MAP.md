@@ -27,7 +27,7 @@ For usage start at [README.md](../README.md), for design and trust boundaries at
 pkgwatch/
 ├─ README.md                 usage, live examples, limitations
 ├─ SPEC.md                   normative contract (schemas, rules, split)
-├─ CHANGELOG.md              0.3.1 release notes
+├─ CHANGELOG.md              0.3.2 release notes
 ├─ LICENSE                   MIT, "pkgwatch contributors"
 ├─ pyproject.toml            packaging, dependencies, pytest/ruff/mypy
 ├─ uv.lock                   locked dependencies

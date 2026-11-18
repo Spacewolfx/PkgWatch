@@ -91,7 +91,7 @@ uv run pkgwatch config-check --path pkgwatch.toml
 ```
 
 The code itself also installs as a wheel (`pip install .` — hatchling, single runtime
-dependency `pydantic`); version 0.3.1. Licensed under MIT (see `LICENSE`). Publishing to
+dependency `pydantic`); version 0.3.2. Licensed under MIT (see `LICENSE`). Publishing to
 a package index is not set up yet: install from the repository checkout until that
 decided path exists.
 
@@ -594,7 +594,7 @@ max_metadata_bytes = 8388608      # hard cap on the registry document
 max_tarball_bytes = 67108864      # hard cap on each tarball
 request_timeout_seconds = 15.0
 max_redirects = 5                 # same-host redirects only
-user_agent = "pkgwatch/0.3.1"
+user_agent = "pkgwatch/0.3.2"
 
 [obfuscation]
 min_blob_length = 200             # base64-like run, characters

@@ -38,8 +38,8 @@ dist/pkgwatch-<version>.tar.gz
 dist/pkgwatch-<version>-py3-none-any.whl
 ```
 
-For the current tree these are `pkgwatch-0.3.1.tar.gz` and
-`pkgwatch-0.3.1-py3-none-any.whl`. The version comes from `pyproject.toml`.
+For the current tree these are `pkgwatch-0.3.2.tar.gz` and
+`pkgwatch-0.3.2-py3-none-any.whl`. The version comes from `pyproject.toml`.
 
 `dist/` is gitignored except for its tracked `.gitignore`. Old wheels are left in place, so
 remove stale artifacts before comparing builds:
@@ -57,7 +57,7 @@ Install the wheel into a fresh environment rather than trusting the source tree:
 
 ```bash
 uv venv .build-check
-uv pip install --python .build-check/bin/python dist/pkgwatch-0.3.1-py3-none-any.whl
+uv pip install --python .build-check/bin/python dist/pkgwatch-0.3.2-py3-none-any.whl
 .build-check/bin/pkgwatch version
 ```
 
@@ -76,7 +76,7 @@ hatchling. The same commands work locally:
 ```bash
 python -m pip install .                       # editable-equivalent install from source
 python -m pip wheel . --no-deps --wheel-dir dist
-python -m pip install dist/pkgwatch-0.3.1-py3-none-any.whl
+python -m pip install dist/pkgwatch-0.3.2-py3-none-any.whl
 ```
 
 ## When bumping the version

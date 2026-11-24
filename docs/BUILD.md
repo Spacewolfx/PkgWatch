@@ -41,14 +41,14 @@ dist/pkgwatch-<version>-py3-none-any.whl
 For the current tree these are `pkgwatch-0.3.2.tar.gz` and
 `pkgwatch-0.3.2-py3-none-any.whl`. The version comes from `pyproject.toml`.
 
-`dist/` is gitignored except for its tracked `.gitignore`. Old wheels are left in place, so
-remove stale artifacts before comparing builds:
+`dist/` is gitignored by the root `.gitignore`; any `dist/.gitignore` is local-only, not
+tracked. Old wheels are left in place, so remove stale artifacts before comparing builds:
 
 ```bash
 # bash
-find dist -type f ! -name .gitignore -delete
+find dist -type f -delete
 # PowerShell
-Get-ChildItem dist -File | Where-Object Name -ne '.gitignore' | Remove-Item
+Get-ChildItem dist -File | Remove-Item
 ```
 
 ## Verify the built wheel
@@ -59,6 +59,7 @@ Install the wheel into a fresh environment rather than trusting the source tree:
 uv venv .build-check
 uv pip install --python .build-check/bin/python dist/pkgwatch-0.3.2-py3-none-any.whl
 .build-check/bin/pkgwatch version
+.build-check/bin/python -m pkgwatch version
 ```
 
 On Windows use `.build-check\Scripts\python.exe` and `.build-check\Scripts\pkgwatch.exe`.
@@ -74,14 +75,14 @@ The composite action installs from a checkout with pip, which performs a PEP 517
 hatchling. The same commands work locally:
 
 ```bash
-python -m pip install .                       # editable-equivalent install from source
+python -m pip install .                       # regular PEP 517 install from source (-e . for editable)
 python -m pip wheel . --no-deps --wheel-dir dist
 python -m pip install dist/pkgwatch-0.3.2-py3-none-any.whl
 ```
 
 ## When bumping the version
 
-Four places must agree — two tests enforce the first three and the README string:
+Four places must agree — three test functions enforce the first three and the README string:
 
 | Place | What to change |
 |---|---|

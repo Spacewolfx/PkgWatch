@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+from email.utils import format_datetime
+
 import pytest
 
 from pkgwatch.fetch.npm import FetchTimeout, HttpResponse
@@ -126,3 +129,25 @@ def test_the_polite_request_delay_applies_to_every_attempt() -> None:
 
     assert _get(client).status == 200
     assert sleeps == [0.25, 0.5, 0.25]
+
+
+def test_a_retry_after_http_date_is_honoured() -> None:
+    # RFC 9110 allows a date instead of seconds; registries in the wild use both.
+    sleeps: list[float] = []
+    when = format_datetime(datetime.now(UTC) + timedelta(seconds=30), usegmt=True)
+    inner = _ScriptedClient(_retry(429, **{"Retry-After": when}), _ok())
+    client = RetryingClient(inner, policy=_policy(sleeps, max_delay=60.0))
+
+    assert _get(client).status == 200
+    assert len(sleeps) == 1
+    assert 29.0 <= sleeps[0] <= 30.0
+
+
+def test_a_past_or_unparseable_retry_after_falls_back_to_the_backoff() -> None:
+    for header in ("Wed, 21 Oct 2015 07:28:00 GMT", "soon", "-5", "nan"):
+        sleeps: list[float] = []
+        inner = _ScriptedClient(_retry(429, **{"Retry-After": header}), _ok())
+        client = RetryingClient(inner, policy=_policy(sleeps))
+
+        assert _get(client).status == 200
+        assert sleeps == [0.5]

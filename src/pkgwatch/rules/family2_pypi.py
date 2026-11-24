@@ -33,9 +33,13 @@ _DUNDER_IMPORT = "__imp" + "ort__"
 # syntax is not a newly gained power (SPEC §4.5). Lines are clipped before matching, so the
 # ``[^\n]*`` import-list scan stays bounded.
 _SHELL_PATTERNS: tuple[scan.Pattern, ...] = (
-    scan.pattern("os_system", r"""os\.system\s*\(""", capability="os_system"),
-    scan.pattern("os_popen", r"""os\.popen\s*\(""", capability="os_popen"),
-    scan.pattern("process_module", _SUBPROCESS + r"""\.""", capability="process_module"),
+    scan.pattern("os_system", r"""(?<![A-Za-z0-9_.])os\.system\s*\(""", capability="os_system"),
+    scan.pattern("os_popen", r"""(?<![A-Za-z0-9_.])os\.popen\s*\(""", capability="os_popen"),
+    scan.pattern(
+        "process_module",
+        r"""(?<![A-Za-z0-9_.])""" + _SUBPROCESS + r"""\.""",
+        capability="process_module",
+    ),
     scan.pattern(
         "from_" + _SUBPROCESS,
         r"\bfrom\s+" + _SUBPROCESS + r"\s+import\b",
@@ -81,7 +85,7 @@ _NET_PATTERNS: tuple[scan.Pattern, ...] = (
         )
         for module in ("socket", "urllib", "requests", "http.client", "http")
     ),
-    scan.pattern("urllib_request", r"""urllib\.request""", capability="urllib"),
+    scan.pattern("urllib_request", r"""(?<![A-Za-z0-9_.])urllib\.request""", capability="urllib"),
 )
 
 # Whole-environment reads only: the mapping consumed as a whole (iterated, copied,
@@ -90,13 +94,16 @@ _NET_PATTERNS: tuple[scan.Pattern, ...] = (
 # a subscript or a ``.get(`` call. ``getenv`` always names one key, so it is not enumeration
 # and has no pattern here.
 _ENV_PATTERNS: tuple[scan.Pattern, ...] = (
-    scan.pattern("os_environ", r"""os\.environ(?!\s*\[)(?!\s*\.\s*get\s*\()"""),
+    scan.pattern(
+        "os_environ",
+        r"""(?<![A-Za-z0-9_.])os\.environ(?!\s*\[)(?!\s*\.\s*get\s*\()""",
+    ),
 )
 
 
 @registry.register(
     rule_id=PYPI_SHELL_EXEC_ADDED,
-    rule_version=3,
+    rule_version=4,
     severity="high",
     ecosystems=("pypi",),
     families=(RuleFamily.DANGEROUS_CAPABILITY,),
@@ -124,7 +131,7 @@ def pypi_shell_exec_added(ctx: DiffContext) -> list[Finding]:
     return scan.capability_findings(
         ctx,
         rule_id=PYPI_SHELL_EXEC_ADDED,
-        rule_version=3,
+        rule_version=4,
         severity=Severity.HIGH,
         patterns=_SHELL_PATTERNS,
         suffixes=scan.PYPI_SUFFIXES,
@@ -133,7 +140,7 @@ def pypi_shell_exec_added(ctx: DiffContext) -> list[Finding]:
 
 @registry.register(
     rule_id=PYPI_EVAL_EXEC_ADDED,
-    rule_version=2,
+    rule_version=3,
     severity="high",
     ecosystems=("pypi",),
     families=(RuleFamily.DANGEROUS_CAPABILITY,),
@@ -159,7 +166,7 @@ def pypi_eval_exec_added(ctx: DiffContext) -> list[Finding]:
     return scan.capability_findings(
         ctx,
         rule_id=PYPI_EVAL_EXEC_ADDED,
-        rule_version=2,
+        rule_version=3,
         severity=Severity.HIGH,
         patterns=_EVAL_PATTERNS,
         suffixes=scan.PYPI_SUFFIXES,
@@ -168,7 +175,7 @@ def pypi_eval_exec_added(ctx: DiffContext) -> list[Finding]:
 
 @registry.register(
     rule_id=PYPI_NET_ACCESS_ADDED,
-    rule_version=2,
+    rule_version=3,
     severity="medium",
     ecosystems=("pypi",),
     families=(RuleFamily.DANGEROUS_CAPABILITY,),
@@ -192,7 +199,7 @@ def pypi_net_access_added(ctx: DiffContext) -> list[Finding]:
     return scan.capability_findings(
         ctx,
         rule_id=PYPI_NET_ACCESS_ADDED,
-        rule_version=2,
+        rule_version=3,
         severity=Severity.MEDIUM,
         patterns=_NET_PATTERNS,
         suffixes=scan.PYPI_SUFFIXES,
@@ -201,7 +208,7 @@ def pypi_net_access_added(ctx: DiffContext) -> list[Finding]:
 
 @registry.register(
     rule_id=PYPI_ENV_ENUM_ADDED,
-    rule_version=2,
+    rule_version=3,
     severity="low",
     ecosystems=("pypi",),
     families=(RuleFamily.DANGEROUS_CAPABILITY,),
@@ -226,7 +233,7 @@ def pypi_env_enum_added(ctx: DiffContext) -> list[Finding]:
     return scan.capability_findings(
         ctx,
         rule_id=PYPI_ENV_ENUM_ADDED,
-        rule_version=2,
+        rule_version=3,
         severity=Severity.LOW,
         patterns=_ENV_PATTERNS,
         suffixes=scan.PYPI_SUFFIXES,

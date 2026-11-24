@@ -17,6 +17,7 @@ from pkgwatch.features import build_features
 from pkgwatch.models import AnalysisRecord, DatasetFinding, DiffContext, Finding
 from pkgwatch.rules import families_by_rule_id, rule_set_version
 from pkgwatch.rules.runner import analysis_incomplete
+from pkgwatch.sandbox import sha256_file
 from pkgwatch.score.engine import score
 
 
@@ -46,8 +47,10 @@ def record_pair(
 
     try:
         directory.mkdir(parents=True, exist_ok=True)
-        old_digest = hashlib.sha256(old_path.read_bytes()).hexdigest()
-        new_digest = hashlib.sha256(new_path.read_bytes()).hexdigest()
+        # Chunked: a tarball is capped near 128 MiB, and two read_bytes() copies would peak
+        # at twice that before the record is even built.
+        old_digest = sha256_file(old_path)
+        new_digest = sha256_file(new_path)
     except OSError:
         raise DatasetError("RECORD_WRITE_FAILED") from None
 

@@ -7,7 +7,50 @@ of malicious behaviour.
 
 ## Unreleased
 
-No changes yet.
+Detection semantics changed for nine rules, so `rule_set_version` moves from `9f7f24f3935e` to
+`ca4f11b65010`. Old dataset records keep the value they were written with and cannot be mixed
+with new ones (the validator requires one `rule_set_version` per dataset), so an export starts
+fresh. Detection quality remains unmeasured (`measured: false`). Static analysis only; no
+package content is executed.
+
+### Fixed
+
+- Each extracted tree now has its own view allowance, an unchanged path is never read on the new
+  side, and binary content is not charged against the allowance that text views spend. A pair
+  whose two trees each fit the limit can no longer be reported as `ANALYSIS_INCOMPLETE`, and
+  large assets no longer push source views out of the budget.
+- Comment lines no longer match capability rules: Python `#`, JavaScript `//`, `/* */` blocks and
+  `*` continuation lines are skipped (quote-aware, so a string holding `http://` is not read as a
+  comment), both on the added lines and on the old-tree suppression scan. String literals are
+  still matched; that blind spot is documented in `docs/rules.md`.
+- A `--record-dir` write failure now appears in text and Markdown output as well as JSON, and a
+  failed new package in the Markdown lock report lists its parse problems.
+- Lock SARIF results name the lockfile relative to the repository root (`sub/new.json`), carry no
+  invented `region`, and keep the package path/line in `properties`; `properties.lockfile` holds
+  the file. Machine consumers must not expect a line number for lock-mode results.
+- SIGINT exits 130 and a closed stdout pipe exits 0 through `main()`, which both the console
+  script and `python -m pkgwatch` call, and the devnull redirect closes its descriptor.
+- Dataset records hash artifacts in chunks instead of reading both tarballs fully twice (up to
+  2 × 128 MiB peak).
+- Identical binary content on both sides is `UNCHANGED`/`MODE_ONLY` instead of `BINARY`, so
+  dataset features no longer see a phantom binary change.
+- PyPI shell, network and environment patterns require a left boundary: `mock_os.system(`
+  `mock_subprocess.run(`, `my_urllib.request` and `xos.environ` are no longer capabilities.
+- `Retry-After` is accepted as an HTTP-date as well as a number of seconds; a past date parses to
+  0 seconds and the normal backoff applies. Retry scope is unchanged (429, 5xx, timeouts) per
+  SPEC §9.1(10).
+- The experimental gate skips a rule only when every one of its families is experimental, so a
+  rule that mixes experimental and stable families still runs by default; `--explain` uses the
+  same test and no longer mislabels such a rule.
+
+### Changed — detection semantics
+
+- Nine rules changed behaviour, so `rule_set_version` is `ca4f11b65010`:
+  `JS_CHILD_PROCESS_ADDED`, `DYNAMIC_EVAL_ADDED`, `NET_ACCESS_ADDED` and
+  `ENV_ENUMERATION_ADDED` are now version 3, `FS_WRITE_OUTSIDE_PACKAGE_ADDED` is 2,
+  `PYPI_SHELL_EXEC_ADDED` is 4, and `PYPI_EVAL_EXEC_ADDED`, `PYPI_NET_ACCESS_ADDED` and
+  `PYPI_ENV_ENUM_ADDED` are 3. Comment-only matches disappear, a dotted prefix no longer
+  matches, and the evidence is still the original added line.
 
 ## 0.3.2 — 2026-11-18
 

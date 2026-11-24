@@ -87,12 +87,15 @@ def test_v02_rule_ids_severities_and_versions_follow_the_operator_decision() -> 
     # Detection widened past v1 for these rules; the operator decision keeps the rest at 1.
     bumped = {
         "DEPENDENCY_ADDED": 2,
-        "DYNAMIC_EVAL_ADDED": 2,
-        "ENV_ENUMERATION_ADDED": 2,
-        "PYPI_SHELL_EXEC_ADDED": 3,
-        "PYPI_EVAL_EXEC_ADDED": 2,
-        "PYPI_NET_ACCESS_ADDED": 2,
-        "PYPI_ENV_ENUM_ADDED": 2,
+        "JS_CHILD_PROCESS_ADDED": 3,
+        "DYNAMIC_EVAL_ADDED": 3,
+        "NET_ACCESS_ADDED": 3,
+        "FS_WRITE_OUTSIDE_PACKAGE_ADDED": 2,
+        "ENV_ENUMERATION_ADDED": 3,
+        "PYPI_SHELL_EXEC_ADDED": 4,
+        "PYPI_EVAL_EXEC_ADDED": 3,
+        "PYPI_NET_ACCESS_ADDED": 3,
+        "PYPI_ENV_ENUM_ADDED": 3,
         "PYPI_INSTALL_HOOK_ADDED": 2,
     }
     for rule_id, severity in expected.items():

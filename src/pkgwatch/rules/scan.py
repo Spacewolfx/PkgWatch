@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 from typing import Any
 
 from pkgwatch.diff.files import split_lines
@@ -33,6 +34,13 @@ PYPI_BUILD_FILES = ("setup.py", "pyproject.toml", "setup.cfg")
 
 FULL_SCAN = "full"
 PARTIAL_SCAN = "partial"
+
+# Capability patterns are line regexes over added source. A comment can name a capability
+# without the package gaining it (a note such as "// see require(child_process)", a
+# commented-out call, a docstring), so only the code part of a line is scanned. A line that
+# continues a block comment ("* text") counts as a comment for the same reason.
+_JS_COMMENT_SUFFIXES = frozenset({".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"})
+_BLOCK_CONTINUATION = re.compile(r"^\s*\*(?:\s|/|$)")
 
 
 @dataclass(frozen=True)
@@ -116,6 +124,54 @@ def old_tree_state(ctx: DiffContext) -> str:
     return FULL_SCAN
 
 
+def code_part(text: str, path: str) -> str:
+    """One line of code with a trailing comment removed, so comments cannot match.
+
+    Quote-aware: a "//" or "#" inside a string literal does not cut the line, so
+    ``const u = "http://x"; require("child_process")`` is still seen whole. Text inside
+    string literals is deliberately still scanned: a capability hidden in a string is a
+    documented blind spot of a line regex, not something this helper can decide.
+    """
+    suffix = PurePosixPath(path).suffix.lower()
+    if suffix == ".py":
+        markers: tuple[str, ...] = ("#",)
+        quotes: tuple[str, ...] = ("'", '"')
+    elif suffix in _JS_COMMENT_SUFFIXES:
+        if _BLOCK_CONTINUATION.match(text):
+            return ""
+        markers = ("//", "/*")
+        quotes = ("'", '"', "`")
+    else:
+        return text
+
+    kept: list[str] = []
+    quote: str | None = None
+    escaped = False
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if quote is not None:
+            kept.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+            index += 1
+            continue
+        if char in quotes:
+            quote = char
+            kept.append(char)
+            index += 1
+            continue
+        if any(text.startswith(marker, index) for marker in markers):
+            break
+        kept.append(char)
+        index += 1
+    return "".join(kept).rstrip()
+
+
 def _clipped_lines(view: FileView) -> Iterator[str]:
     """Old-tree lines bounded to the per-line cap, so one huge line cannot hang a regex."""
     for line in split_lines(view.content):
@@ -131,7 +187,7 @@ def old_tree_has_capability(
     reports that as a partial scan so a clipped miss is never claimed as a full proof.
     """
     return any(
-        item.regex.search(line)
+        item.regex.search(code_part(line, view.path))
         for view in text_views(ctx.files_old.values(), suffixes=suffixes)
         for line in _clipped_lines(view)
     )
@@ -154,8 +210,9 @@ def capability_findings(
     hits: list[tuple[int, str, str, Pattern]] = []
     for view in text_views(ctx.files_new.values(), suffixes=suffixes):
         for number, text in added_lines(view):
+            code = code_part(text, view.path)
             for item in patterns:
-                if item.regex.search(text):
+                if item.regex.search(code):
                     hits.append((number, text, view.path, item))
                     break
 

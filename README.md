@@ -83,12 +83,17 @@ uv sync
 uv run pkgwatch version
 ```
 
+Both entry points work: the `pkgwatch` console script and `python -m pkgwatch` (for example
+`uv run python -m pkgwatch version`). The GitHub Action uses the module form.
+
 Configuration is optional; the built-in defaults match SPEC.md. To keep an editable copy:
 
 ```bash
 uv run pkgwatch config-init --path pkgwatch.toml
 uv run pkgwatch config-check --path pkgwatch.toml
 ```
+
+`config-init` refuses an existing file unless `--force` is given.
 
 The code itself also installs as a wheel (`pip install .` — hatchling, single runtime
 dependency `pydantic`); version 0.3.2. Licensed under MIT (see `LICENSE`). Publishing to
@@ -129,12 +134,17 @@ Scoped names are accepted and percent-encoded (`@scope/pkg` becomes `@scope%2Fpk
 | Flag | Meaning |
 |---|---|
 | `--json` | emit the JSON report documented below |
+| `--markdown` | emit a PR-comment sized Markdown report instead of text |
+| `--output FILE` / `-o` | write the report atomically to `FILE` instead of stdout |
+| `--quiet` / `-q` | suppress the stdout report; exit code still reflects findings |
 | `--sarif` | emit SARIF v2.1.0 JSON for GitHub/GitLab code scanning |
 | `--fail-on LEVEL` | `info`, `low`, `medium` (default), `high`, `critical` |
+| `--fail-on-score SCORE` | also exit 1 when the computed risk score is at least `SCORE` |
+| `--min-severity LEVEL` | hide findings below `LEVEL` from display (default `info`) |
 | `--verbose` | show every changed file instead of the first 50 |
 | `--explain` | add neutral "Why it matters" / "Common benign causes" lines per fired rule (experimental rules are marked) |
 | `--ignore RULE_ID` | repeatable; removes that rule from findings, score and exit code, and prints `ignored: RULE_ID (n findings)`; an unknown ID exits 2 |
-| `--experimental` | also run rule families 3 (obfuscation) and 4 (metadata); off by default |
+| `--experimental` | also run rules whose **every** family is experimental (obfuscation, metadata); a mixed-family rule runs by default |
 | `--config PATH` | read the sandbox, scoring, fetch and obfuscation limits from this TOML file; a missing file exits 2 with `CONFIG_NOT_FOUND`, an unreadable one with `CONFIG_INVALID` |
 | `--no-cache` | disable the verified download cache for this run |
 
@@ -349,7 +359,7 @@ carry `"argument": "--old" | "--new"` instead of a path. The stable code is also
 on stderr.
 
 Every other machine-readable output carries the same `schema_version: 1` envelope field:
-`config-check`, `rules --as-json`, `lock --plan --json`, `export-dataset --json` and
+`config-check`, `rules --json`, `lock --plan --json`, `export-dataset --json` and
 `validate-dataset --json`. The two report schemas keep their own versions: compare `3`,
 lock `4`. SARIF v2.1.0 is governed by its own standard and has no extra field.
 
@@ -373,6 +383,7 @@ a tool failure.
 | `1` | one or more findings at or above `--fail-on` |
 | `2` | any error — fetch, digest, sandbox, record write or `analysis_incomplete` |
 | `1` | (only `validate-dataset`) the file is invalid content, per SPEC §6.4 |
+| `130` | SIGINT; a closed stdout pipe (for example `... \| head`) exits `0`. Both entry points share this wrapper in `main()`. |
 
 Errors print a stable code, never an exception message (those can contain package text):
 
@@ -435,8 +446,10 @@ separate no-baseline section for brand-new packages.
 | `--old OLD_LOCK` | required; the lockfile before the update |
 | `--new NEW_LOCK` | required; the lockfile after the update |
 | `--json` | emit the lock JSON report (its own `schema_version`, currently 4) |
+| `--output FILE` / `-o` | write the report atomically to `FILE` instead of stdout |
+| `--quiet` / `-q` | suppress the stdout report; exit code still reflects findings |
 | `--sarif` | emit SARIF v2.1.0 JSON for GitHub/GitLab code scanning |
-| `--experimental` | also run rule families 3 (obfuscation) and 4 (metadata); off by default |
+| `--experimental` | also run rules whose **every** family is experimental (obfuscation, metadata); a mixed-family rule runs by default |
 | `--markdown` | emit the report as Markdown (PR-comment sized, collapsible sections) instead of text |
 | `--fail-on LEVEL` | `info`, `low`, `medium` (default), `high`, `critical`; falls back to the config's `fail_on`, CLI wins |
 | `--max-pairs N` | override `[lock].max_pairs`; changed pairs plus analysed new packages count toward it; over the limit exits 2, never truncates |
@@ -756,7 +769,7 @@ repository as it stands.
 
 ```bash
 uv sync
-uv run pytest -v
+uv run pytest -q
 uv run mypy --strict src/
 uv run ruff check .
 uv run ruff format --check .

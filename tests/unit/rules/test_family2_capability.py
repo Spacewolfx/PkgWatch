@@ -84,13 +84,14 @@ NEAR_MISSES: list[tuple[str, Callable[[DiffContext], list[Finding]], str]] = [
     (ENV_ENUMERATION_ADDED, env_enumeration_added, "var home = process.env.HOME;\n"),
 ]
 
-# ESM detection widened these two rules; the other three are unchanged.
+# Comment-aware scanning changed every capability rule's detection; before that, ESM
+# detection had already widened two of them.
 EXPECTED_VERSIONS = {
-    JS_CHILD_PROCESS_ADDED: 2,
-    DYNAMIC_EVAL_ADDED: 2,
-    NET_ACCESS_ADDED: 2,
-    FS_WRITE_OUTSIDE_PACKAGE_ADDED: 1,
-    ENV_ENUMERATION_ADDED: 2,
+    JS_CHILD_PROCESS_ADDED: 3,
+    DYNAMIC_EVAL_ADDED: 3,
+    NET_ACCESS_ADDED: 3,
+    FS_WRITE_OUTSIDE_PACKAGE_ADDED: 2,
+    ENV_ENUMERATION_ADDED: 3,
 }
 
 
@@ -228,7 +229,7 @@ def test_positive_fixture_emits_the_exact_child_process_finding(tmp_path: Path) 
     assert findings == [
         Finding(
             rule_id=JS_CHILD_PROCESS_ADDED,
-            rule_version=2,
+            rule_version=3,
             severity=Severity.HIGH,
             path="package/index.js",
             evidence='const cp = require("child_process");',

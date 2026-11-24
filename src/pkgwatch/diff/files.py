@@ -7,9 +7,12 @@ run anything — a downloaded file is hostile input, and here it is only ever by
 
 Two caps keep the context bounded, because a package can claim gigabytes of text:
 ``text_scan_bytes`` truncates one file's view, and ``max_total_uncompressed_bytes`` is a
-second, shared allowance for building views across *both* trees. A file that cannot fit is
-skipped and recorded, so ``views_incomplete`` states the gap instead of the rules silently
-reasoning from less than the truth.
+second allowance, applied once to each tree, for building views. What to read is decided
+from the manifests first: an unchanged path reads only its old side, because its new view
+would be discarded anyway. A side can therefore never be charged more than the bytes the
+sandbox already admitted, and a file that still cannot fit is skipped and recorded so
+``views_incomplete`` states the gap instead of the rules silently reasoning from less than
+the truth.
 
 Rename detection is deliberately absent: a moved file is one REMOVED row plus one ADDED row,
 which is honest and needs no similarity threshold to tune.
@@ -124,7 +127,8 @@ def build_diff_context(
         new = _re_root(new)
     old_entries = _by_path(old.entries)
     new_entries = _by_path(new.entries)
-    budget = _Budget(limits.max_total_uncompressed_bytes)
+    old_budget = _Budget(limits.max_total_uncompressed_bytes)
+    new_budget = _Budget(limits.max_total_uncompressed_bytes)
     changes: list[FileChange] = []
     files_old: dict[str, FileView] = {}
     files_new: dict[str, FileView] = {}
@@ -135,14 +139,28 @@ def build_diff_context(
         entry_new = new_entries.get(path)
 
         if _is_archive(path, entry_old, entry_new):
-            changes.append(_change(path, entry_old, entry_new, ChangeType.NESTED_ARCHIVE, ()))
+            changes.append(
+                _change(path, entry_old, entry_new, ChangeType.NESTED_ARCHIVE, (), binary=False)
+            )
             continue
 
-        raw_old = _read(old.root, entry_old, limits, budget, parse_errors)
-        raw_new = _read(new.root, entry_new, limits, budget, parse_errors)
+        same_content = _same_content(entry_old, entry_new)
+        raw_old = _read(old.root, entry_old, limits, old_budget, parse_errors)
+        raw_new = (
+            None if same_content else _read(new.root, entry_new, limits, new_budget, parse_errors)
+        )
         change_type = _classify(entry_old, entry_new, raw_old, raw_new)
         diff_lines = _diff_for(change_type, raw_old, raw_new)
-        changes.append(_change(path, entry_old, entry_new, change_type, diff_lines))
+        changes.append(
+            _change(
+                path,
+                entry_old,
+                entry_new,
+                change_type,
+                diff_lines,
+                binary=_is_binary(raw_old) or _is_binary(raw_new),
+            )
+        )
 
         if change_type not in _NO_TEXT_VIEWS:
             if change_type is not ChangeType.ADDED:
@@ -307,7 +325,7 @@ def _re_root(result: ExtractionResult) -> ExtractionResult:
 
 
 class _Budget:
-    """Shared allowance for reading file bodies into views, in uncompressed bytes."""
+    """One tree's allowance for reading file bodies into views, in uncompressed bytes."""
 
     def __init__(self, limit: int) -> None:
         self.remaining = limit
@@ -341,27 +359,39 @@ def _read(
     budget: _Budget,
     parse_errors: list[ParseError],
 ) -> bytes | None:
-    """Bytes of one file, capped at ``text_scan_bytes``; ``None`` with a recorded reason."""
+    """Bytes of one file, capped at ``text_scan_bytes``; ``None`` with a recorded reason.
+
+    Binary content is never scanned as text, so it is not charged against the view
+    allowance: otherwise a package shipping large assets would lose its source views to
+    the budget. The allowance is charged once the prefix proves the file is text.
+    """
     if entry is None or _is_link(entry) or entry.sha256 is None:
         return None
     path = entry.path
     needed = min(entry.size, limits.text_scan_bytes)
-    if not budget.take(needed):
-        parse_errors.append(
-            ParseError(
-                path=path,
-                kind=ParseErrorKind.BUDGET,
-                detail=(
-                    f"view allowance of {limits.max_total_uncompressed_bytes} bytes was spent "
-                    f"before this {needed}-byte file"
-                ),
-            )
-        )
-        return None
     try:
         resolved = within_root(root, entry.path)
         with resolved.open("rb") as handle:
-            return handle.read(limits.text_scan_bytes)
+            head = handle.read(BINARY_SNIFF_BYTES)
+            tail = max(0, limits.text_scan_bytes - len(head))
+            if b"\x00" in head:
+                # A NUL in the sniff window makes this binary for good (``_is_binary``
+                # reads the same window), and binary bytes never become a text view or a
+                # line diff. Reading them is bounded per file; charging them is not.
+                return head[: limits.text_scan_bytes] + handle.read(tail)
+            if not budget.take(needed):
+                parse_errors.append(
+                    ParseError(
+                        path=path,
+                        kind=ParseErrorKind.BUDGET,
+                        detail=(
+                            f"view allowance of {limits.max_total_uncompressed_bytes} bytes "
+                            f"was spent before this {needed}-byte file"
+                        ),
+                    )
+                )
+                return None
+            return head[: limits.text_scan_bytes] + handle.read(tail)
     except (OSError, ValueError) as exc:
         parse_errors.append(
             ParseError(
@@ -377,6 +407,19 @@ def _is_binary(raw: bytes | None) -> bool:
     return raw is not None and b"\x00" in raw[:BINARY_SNIFF_BYTES]
 
 
+def _same_content(entry_old: ManifestEntry | None, entry_new: ManifestEntry | None) -> bool:
+    """Both sides are regular files with the same known content hash.
+
+    Content equality is decided before anything is read: the new side of such a path would
+    only be read to be thrown away.
+    """
+    if entry_old is None or entry_new is None:
+        return False
+    if _is_link(entry_old) or _is_link(entry_new):
+        return False
+    return entry_old.sha256 is not None and entry_old.sha256 == entry_new.sha256
+
+
 def _classify(
     entry_old: ManifestEntry | None,
     entry_new: ManifestEntry | None,
@@ -390,12 +433,14 @@ def _classify(
     if _is_link(entry_old) or _is_link(entry_new):
         same = entry_old.link_target == entry_new.link_target and entry_old.mode == entry_new.mode
         return ChangeType.UNCHANGED if same else ChangeType.MODIFIED
-    if _is_binary(raw_old) or _is_binary(raw_new):
-        return ChangeType.BINARY
+    # Equality first: identical bytes are not a change, binary or not. Only a differing
+    # pair can be "changed and unreadable as text".
     if entry_old.sha256 is not None and entry_old.sha256 == entry_new.sha256:
         if entry_old.mode == entry_new.mode:
             return ChangeType.UNCHANGED
         return ChangeType.MODE_ONLY
+    if _is_binary(raw_old) or _is_binary(raw_new):
+        return ChangeType.BINARY
     return ChangeType.MODIFIED
 
 
@@ -502,8 +547,14 @@ def _change(
     entry_new: ManifestEntry | None,
     change_type: ChangeType,
     diff_lines: Sequence[DiffLine],
+    *,
+    binary: bool,
 ) -> FileChange:
-    textual = change_type not in _NO_TEXT_VIEWS and not (_is_link(entry_old) or _is_link(entry_new))
+    textual = (
+        change_type not in _NO_TEXT_VIEWS
+        and not (_is_link(entry_old) or _is_link(entry_new))
+        and not binary
+    )
     return FileChange(
         path_old=None if entry_old is None else path,
         path_new=None if entry_new is None else path,

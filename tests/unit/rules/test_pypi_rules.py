@@ -85,10 +85,10 @@ DETECTIONS = [
 
 # Widened detection bumps a rule's version; the rest stay at 1.
 EXPECTED_VERSIONS = {
-    PYPI_SHELL_EXEC_ADDED: 3,
-    PYPI_EVAL_EXEC_ADDED: 2,
-    PYPI_NET_ACCESS_ADDED: 2,
-    PYPI_ENV_ENUM_ADDED: 2,
+    PYPI_SHELL_EXEC_ADDED: 4,
+    PYPI_EVAL_EXEC_ADDED: 3,
+    PYPI_NET_ACCESS_ADDED: 3,
+    PYPI_ENV_ENUM_ADDED: 3,
     PYPI_INSTALL_HOOK_ADDED: 2,
     PYPI_DEPENDENCY_ADDED: 1,
 }
@@ -112,6 +112,22 @@ def test_switching_eval_to_exec_is_not_a_new_capability(tmp_path: Path) -> None:
         ecosystem=Ecosystem.PYPI,
     )
     assert pypi_eval_exec_added(ctx) == []
+
+
+def test_a_dotted_prefix_is_a_different_object_not_a_capability(tmp_path: Path) -> None:
+    # ``mock_os.system`` / ``mock_subprocess.run`` / ``my_urllib.request`` / ``xos.environ``
+    # name other objects; without a left boundary each read as a gained capability.
+    added = (
+        b"mock_os.system('ls')\n"
+        b"mock_subprocess.run(['ls'])\n"
+        b"my_urllib.request.urlopen('http://x')\n"
+        b"xos.environ\n"
+    )
+    ctx = ctx_from_files(tmp_path, BASE, {**BASE, "demo/mock.py": added}, ecosystem=Ecosystem.PYPI)
+
+    assert pypi_shell_exec_added(ctx) == []
+    assert pypi_net_access_added(ctx) == []
+    assert pypi_env_enum_added(ctx) == []
 
 
 def test_rule_metadata_matches_spec() -> None:

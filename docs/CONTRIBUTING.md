@@ -45,6 +45,10 @@ Ruff intentionally excludes `*.md` and `tests/fixtures/**` (see `pyproject.toml`
 uses in-memory registry doubles — no test opens a socket. One sandbox property test is
 skipped on Windows without Developer Mode; that is expected.
 
+`main()` maps SIGINT to exit `130` and a closed stdout pipe (piping into `head`, for example) to
+`0`; both entry points (`pkgwatch`, `python -m pkgwatch`) share that wrapper.
+`tests/unit/test_cli_signals.py` pins the behavior.
+
 ## Where to look
 
 | Need | Read |
@@ -81,9 +85,9 @@ A rule is a pure `DiffContext -> list[Finding]` function. To add one:
    only if the rule needs shipped metadata.
 5. Add a parametrized test in `tests/unit/rules/` using
    `tests.support.fixtures.context_from_case` — one positive and one negative case minimum.
-6. Add a row to `docs/rules.md` with columns `rule_id | family | severity | rule_version |
-   description`. `tests/unit/test_docs_consistency.py` checks that this table matches the
-   live registry exactly, including version and severity.
+6. Add a row to `docs/rules.md` with columns `Rule ID | Family | Severity | Version | Detects`.
+   `tests/unit/test_docs_consistency.py` checks that this table matches the live registry
+   exactly, including version and severity.
 7. Update `CHANGELOG.md`.
 
 ### Change a rule's detection semantics

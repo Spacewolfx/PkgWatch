@@ -27,7 +27,7 @@ code pins itself to, see [SPEC.md](../SPEC.md).
 | Where can an alert come from? | `rules/` only — nothing else may raise, suppress or change an alert |
 | Riskiest surface? | `sandbox/`: every archive member is validated before any member is written |
 | Are detections measured? | No. Every report says `measured: false`; severities and weights are initial values |
-| Current gates | 1057 passed, 1 skipped; `mypy --strict src/` and both ruff checks clean |
+| Current gates | 1077 passed, 1 skipped; `mypy --strict src/` and both ruff checks clean |
 
 Two commitments shape the whole design:
 
@@ -49,8 +49,8 @@ Two commitments shape the whole design:
 | `src/pkgwatch/fetch/npm.py` | npm downloader | Registry document + tarball to temp files; digest verified; **no extraction** | built |
 | `src/pkgwatch/fetch/pypi.py` | PyPI downloader | Project document + per-version documents + sdist/wheel; PEP 503 names, host allowlist | built |
 | `src/pkgwatch/fetch/cache.py` | Download cache | Verified-digest-keyed artifact cache in the OS user cache dir | built |
-| `src/pkgwatch/fetch/retry.py` | Retry policy | 429/5xx/timeout only, capped backoff, `Retry-After` honoured | built |
-| `src/pkgwatch/sandbox/` | Safe unpacker | Archive validation and extraction under hard limits (tar + zip readers) | built |
+| `src/pkgwatch/fetch/retry.py` | Retry policy | 429/5xx/timeout only, capped backoff, `Retry-After` as seconds or HTTP-date | built |
+| `src/pkgwatch/sandbox/` | Safe unpacker | Archive validation/extraction (tar + zip readers) plus chunked `sha256_file` used by dataset records | built |
 | `src/pkgwatch/diff/files.py` | Differ | File-level changes → `DiffContext`; PyPI sdist re-rooting | built |
 | `src/pkgwatch/diff/manifest.py` | Manifest diff | Root `package.json` sections, both trees | built |
 | `src/pkgwatch/diff/pypi_metadata.py` | Metadata diff | Shipped `PKG-INFO`/`METADATA` dependencies | built |
@@ -89,7 +89,8 @@ them, never the reverse. `lock/` reuses `fetch/`, `sandbox/`, `diff/`, `rules/` 
  rules/runner.py (ecosystem select × family gating) ──▶ list[Finding]
         ▼
  score/engine.py ──▶ ScoreResult ──▶ report ──▶ text / JSON / Markdown / SARIF
-                                        ├────▶ exit code 0 | 1 (--fail-on) | 2 (error)
+                                        ├────▶ exit code 0 | 1 (--fail-on) | 2 (error);
+                                               130 on SIGINT, 0 on closed stdout pipe (main)
                                         └── --record-dir ──▶ records/<sha256>.json
                                              (AnalysisRecord: unfiltered findings, re-score,
                                               69 features, both artifact digests)
@@ -99,7 +100,9 @@ them, never the reverse. `lock/` reuses `fetch/`, `sandbox/`, `diff/`, `rules/` 
  lockfile/parser.py (untrusted) ──▶ lockfile/plan.py (pairs + new packages, no network)
         ▼
  lock/run.py: the compare pipeline above, per pair, concurrently ──▶ lock/report.py
-        └── baseline hiding + optional --update-baseline + --plan, --markdown, --sarif
+        └── baseline hiding + --update-baseline + --plan, --markdown, --sarif;
+            --record-dir failures surface as record_errors in all formats; lock SARIF
+            locations name the lockfile relative to the repo root, with no invented region
 ```
 
 No database, no `data/` writes and no persistent extraction roots on this path: a run that
@@ -205,7 +208,8 @@ OS user cache directory, re-verifies on every read, and deletes a corrupt entry 
 using it. `[lock].cache_dir` and `[fetch].cache_dir` relocate it (never inside the
 repository unless said so explicitly) and `--no-cache` disables reads and writes for one
 run. Transient failures (429, 5xx, timeouts) retry with capped exponential backoff, honour
-`Retry-After`, and stay polite via `request_delay_seconds`; no other status is retried.
+`Retry-After` in seconds or HTTP-date form, and stay polite via `request_delay_seconds`;
+no other status is retried.
 
 ### TB3 — Compressed archive → sandbox
 *Threat:* the highest-risk surface in the project. Path traversal, absolute paths,
@@ -213,21 +217,26 @@ run. Transient failures (429, 5xx, timeouts) retry with capped exponential backo
 nesting, Windows-specific escapes (drive letters, UNC, backslashes, case-insensitive
 collisions). *Mechanism:* validate **every** member before writing **any** member; write
 only under a freshly created temp root; commit by rename. Limits are config, defaults in
-SPEC §4. No stdlib convenience is trusted alone — `tarfile`'s `data` filter is applied *in
+SPEC §6.5. No stdlib convenience is trusted alone — `tarfile`'s `data` filter is applied *in
 addition to* our own checks, and our checks are the ones the tests cover.
 
 ### TB4 — Unpacked file content → diff, rules, features
 *Threat:* content that is huge, binary, invalid UTF-8, or crafted to blow up a parser;
 content that leaks into outputs. *Mechanism:* byte-first reading; decode with
-`errors="replace"`; per-file size cap for text analysis with `oversized_file` recorded as a
-finding rather than a crash; every per-file operation wrapped so an exception becomes a
+`errors="replace"`; `text_scan_bytes` truncates a file's view (`FileView.truncated`), and a
+view the diff could not read becomes `ParseErrorKind.BUDGET`/`READ`, surfaced by the runner
+as an INFO finding; every per-file operation wrapped so an exception becomes a
 `RULE_ENGINE_ERROR` info-finding and the worker continues; evidence excerpts hard-capped at
 200 characters in the model itself; features typed so raw prose cannot masquerade as a
 categorical value (SPEC §6.2). Parsers are AST-only — `ast.parse`, `tomllib`, `json`.
 Never `eval`, `exec`, `compile`, `__import__`, `importlib`, `subprocess`, or `pip`.
 PyPI build manifests (`setup.py`, `pyproject.toml`, `setup.cfg`) are analysed as text under
 exactly the same rule as any other file: `setup.py` is never executed or built, only matched
-for lifecycle hooks and capability imports.
+for lifecycle hooks and capability imports. Each tree has its own view allowance (a changed
+path is read from both sides, an unchanged path only from the old side). Capability patterns
+scan only the code part of a line: Python `#`, JavaScript `//`/`/*` and `*` continuation lines
+are stripped quote-aware, so a comment alone cannot fire a rule, while text inside string
+literals still can. Dotted prefixes (`mock_os.system(`) do not match PyPI capabilities.
 
 ### TB5 — Store → dataset
 *Threat:* label leakage and unreproducible datasets. *Mechanism:* split assigned by hashing
@@ -285,8 +294,9 @@ must be visible in the data).
   `rule_id@rule_version` set, so adding or versioning a rule is visible in every report.
 - Seeds fixed for the splitter and for any sampling. No wall-clock, no `hash()`, no dict
   ordering in any computed output — `hash()` is randomized per process, so the splitter uses
-  `sha256` (SPEC §6.3). The one clock on the implemented path is the baseline writer's
-  acknowledged date, which is data, not a match key.
+  `sha256` (SPEC §6.3). Clocks on the implemented path are the baseline writer's acknowledged
+  date (data, not a match key) and `datetime.now(UTC)` in `fetch/retry.py` when an HTTP-date
+  `Retry-After` becomes a delay; neither enters a computed report or dataset key.
 - Findings, file-change lists and feature dicts are emitted in sorted key order; JSON dumps
   use `sort_keys=True`. The same two tarballs in → the same `ScoreResult` bytes out, which
   is what makes the integration tests meaningful and what makes the dataset stable enough to
@@ -333,16 +343,17 @@ must be visible in the data).
 - **Output formats** are renderers over one report dict, not a second pipeline: text, JSON
   (`schema_version`-bearing), Markdown and SARIF 2.1.0 all read the same `CompareReport` /
   `LockReport`, so a new format cannot change a finding, a score or an exit code.
-- **Label sources** implement `LabelSource.load() -> list[LabeledKey]`; a new advisory feed
-  is a new file in `labeling/`, and cannot invent labels without declaring `label_source`
-  (built in M3).
+- **Label sources** are plain loaders — `load_human_labels()` and `load_advisories()`,
+  resolved by `labeling/policy.py:resolve_label()`. `LabelSource` is an enum in `models.py`,
+  not a protocol, and there is no `LabeledKey` type. A new advisory feed is a new file in
+  `labeling/` and cannot invent labels without declaring `label_source` (built in M3).
 
 ## 7. Testing strategy
 
 | Layer | Tool | Covers |
 |---|---|---|
 | Sandbox property tests | hypothesis | arbitrary member names/types/sizes: no write ever lands outside the root; limit violations always rejected, never partial |
-| Sandbox rejection tests | pytest, one case per limit | each of the ~20 rejection conditions in SPEC §4.3 individually |
+| Sandbox rejection tests | pytest, one case per limit | each implemented rejection condition (33 codes in SPEC §6.5; 32 referenced directly by sandbox tests, `EXTRACTION_ROOT_ESCAPE` has no direct case) |
 | Version parser | hypothesis | total order, antisymmetry, transitivity, sort stability, parse/format round-trip |
 | Rule fixtures | pytest parametrized | every rule has ≥1 positive and ≥1 negative synthetic fixture |
 | Score | pytest | monotonicity: adding a finding never lowers the score; decay and caps exact |
@@ -353,7 +364,7 @@ must be visible in the data).
 | Dataset schema | pytest | export validates against `DatasetRecord`; no raw text in features; no package in two splits; `rule_derived` excluded from test metrics — built and run (M3) |
 | Structural | pytest | §5 import/SQL/exec greps |
 
-Current gate: **1057 passed, 1 skipped** (a Windows symlink-creation property case that the OS
+Current gate: **1077 passed, 1 skipped** (a Windows symlink-creation property case that the OS
 denies without Developer Mode), `ruff format --check` + `ruff check` clean, `mypy --strict src/`
 clean over 64 source files. The suite is run with a deliberately long temp root so the
 Windows `MAX_PATH` cache-key regression stays covered. Detection quality is a separate, unmet
@@ -363,8 +374,9 @@ per-ecosystem / per-family rule coverage table.
 
 Fixtures are hand-authored, defanged, and committed under `tests/fixtures/`. They are
 strings a rule can match and nothing more: no live URLs, no working commands, no binaries.
-`tests/fixtures/README.md` states this and each fixture dir carries a one-line
-`HARMLESS.txt` so a future contributor does not mistake a fixture for a sample.
+`tests/fixtures/README.md` states this; npm rule fixtures and npm package trees carry a
+one-line `HARMLESS.txt`, PyPI fixtures and package trees do not. Use the README's convention,
+not the file's presence, to tell a fixture from a sample.
 
 ## 8. Milestones as architecture checkpoints
 
@@ -374,10 +386,13 @@ below is each checkpoint and whether it is actually proven today.
 
 | Checkpoint | What it was meant to prove | Status |
 |---|---|---|
-| **M1** — sandbox + fetch in isolation | The highest-risk surface holds alone, with no rules to reason about: every SPEC §4.3 rejection fires, no write lands outside the root, digests are verified before bytes are trusted. | **proven**, for tar and zip, npm and PyPI. Hypothesis property tests plus one test per rejection condition. |
+| **M1** — sandbox + fetch in isolation | The highest-risk surface holds alone, with no rules to reason about: every implemented rejection in SPEC §6.5 fires, no write lands outside the root, digests are verified before bytes are trusted. | **proven**, for tar and zip, npm and PyPI. Hypothesis property tests plus one test per rejection condition. |
 | **M2** — `DiffContext → Finding → ScoreResult` | The contract end-to-end on fixtures: rules see one object, the score is a pure deterministic function of findings, monotonicity holds, output is byte-stable. | **proven** on the on-demand path. `store/` is built and tested, but no shipped command writes a report to it — the "→ store" half of this arrow is a library, not a pipeline. |
 | **M3** — dataset soundness | Splits leak nothing, features carry no source text, the export validates against `DatasetRecord`, `rule_derived` labels are excluded from metrics. | **proven on the on-demand path.** `compare`/`lock --record-dir` write `AnalysisRecord` files; `export-dataset` joins labels, assigns the salted split and writes JSONL plus a manifest; `validate-dataset` re-checks every invariant. Tests assert the 69-key catalog, no source text in features, one split per package, and that `unknown` and holdout `rule_derived` are never metric-eligible. `data/labels/` ships empty, so no measured metric exists yet. |
-| **M4** — widened coverage | PyPI, AST-level diff, rule families 3–4. | **partial.** PyPI `compare` ships (6 `PYPI_*` rules, sdist re-rooting, per-version registry metadata). Families 3–4 ship but are gated: 6 rules (`BASE64_BLOB_PRESENT`, `HEX_ESCAPE_DENSITY`, `HIGH_ENTROPY_STRINGS`, `DEPENDENCY_ADDED`, `PYPI_DEPENDENCY_ADDED`, `REPOSITORY_URL_CHANGED`) are off unless `--experimental`, and their weights are untuned. `diff/ast.py` ships for Python `.py` files as bounded, report-only symbol changes; JavaScript, TypeScript and Rust stay line-level. `crates.io` support was dropped before release. |
+| **M4** — widened coverage | PyPI, AST-level diff, rule families 3–4. | **partial.** PyPI `compare` ships (6 `PYPI_*` rules, sdist re-rooting, per-version registry metadata). Families 3–4 ship but are gated: 6 rules (`BASE64_BLOB_PRESENT`, `HEX_ESCAPE_DENSITY`, `HIGH_ENTROPY_STRINGS`, `DEPENDENCY_ADDED`, `PYPI_DEPENDENCY_ADDED`, `REPOSITORY_URL_CHANGED`) are off unless `--experimental` — the gate is `rules/runner.py:all_experimental()`, which skips
+a rule only when every family is experimental, so a mixed-family rule runs by default — and
+their weights are untuned. `rule_set_version()` is `ca4f11b65010` (nine rule versions bumped).
+`diff/ast.py` ships for Python `.py` files as bounded, report-only symbol changes; JavaScript, TypeScript and Rust stay line-level. `crates.io` support was dropped before release. |
 
 Two things shipped that this milestone plan did not anticipate:
 

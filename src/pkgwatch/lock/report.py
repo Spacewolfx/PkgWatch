@@ -329,6 +329,11 @@ def format_text(report: LockReport) -> str:
             f"WARNING: {report['unanalysed']} package(s) could not be analysed; "
             "a missing analysis is not a clean result."
         )
+    if "record_errors" in report:
+        lines.append(
+            f"WARNING: {report['record_errors']} record(s) could not be written to "
+            "--record-dir; the analysis itself is complete."
+        )
 
     if analysed:
         lines.append("changed pairs:")
@@ -623,6 +628,11 @@ def format_markdown(report: LockReport) -> str:
             f"WARNING: {report['unanalysed']} package(s) could not be analysed; "
             "a missing analysis is not a clean result."
         )
+    if "record_errors" in report:
+        lines.append(
+            f"WARNING: {report['record_errors']} record(s) could not be written to "
+            "`--record-dir`; the analysis itself is complete."
+        )
 
     if analysed:
         lines.append("")
@@ -659,6 +669,8 @@ def format_markdown(report: LockReport) -> str:
             if analysis is None:
                 continue
             lines.append(f"- `{_md(item['name'])}` {item['version']}: {analysis['error']}")
+            if analysis["parse_problems"]:
+                lines.append(f"  parse problems: {', '.join(analysis['parse_problems'])}")
         lines.append("")
         lines.append("</details>")
 

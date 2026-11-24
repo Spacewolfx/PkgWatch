@@ -1,7 +1,7 @@
 # pkgwatch file map
 
-A map of the repository's tracked files and what each one is for: 353 files, of which
-64 Python modules (~11,300 lines) live under `src/pkgwatch/`.
+A map of the repository's tracked files and what each one is for: 357 files, of which
+64 Python modules (~13,370 lines) live under `src/pkgwatch/`.
 
 For usage start at [README.md](../README.md), for design and trust boundaries at
 [ARCHITECTURE.md](ARCHITECTURE.md), and for the normative contract at
@@ -27,7 +27,7 @@ For usage start at [README.md](../README.md), for design and trust boundaries at
 pkgwatch/
 ├─ README.md                 usage, live examples, limitations
 ├─ SPEC.md                   normative contract (schemas, rules, split)
-├─ CHANGELOG.md              0.3.2 release notes
+├─ CHANGELOG.md              Unreleased detection-semantics fixes + 0.3.2 release notes
 ├─ LICENSE                   MIT, "pkgwatch contributors"
 ├─ pyproject.toml            packaging, dependencies, pytest/ruff/mypy
 ├─ uv.lock                   locked dependencies
@@ -41,9 +41,11 @@ pkgwatch/
 ```
 src/pkgwatch/
 ├─ __main__.py               python -m pkgwatch entry point
-├─ cli.py                    compare / lock / export-dataset / validate-dataset
+├─ cli.py                    version / config-init / config-check / rules / compare / lock /
+│                            export-dataset / validate-dataset; main() maps SIGINT→130,
+│                            closed stdout pipe→0
 ├─ config.py                 TOML configuration and defaults
-├─ models.py                 shared data models (Diff, Finding, AstLimits, ...)
+├─ models.py                 shared data models (DiffContext, Finding, AstLimits, ...)
 ├─ version.py                version parsing and comparison
 ├─ py.typed                  PEP 561 marker: type hints ship with the package
 │
@@ -55,7 +57,7 @@ src/pkgwatch/
 │
 ├─ sandbox/                  safe extraction (no package code is executed)
 │  ├─ plan.py                extraction plan per archive type
-│  ├─ extract.py             executor
+│  ├─ extract.py             executor + chunked sha256_file (used by dataset records)
 │  ├─ tar_reader.py          tar/.tar.gz reader
 │  ├─ zip_reader.py          zip reader
 │  ├─ write.py               bounded writes to disk
@@ -64,11 +66,11 @@ src/pkgwatch/
 │
 ├─ diff/                     version-pair comparison
 │  ├─ files.py               additions/removals/changes + AST attachment
-│  ├─ manifest.py            package.json / pyproject changes
+│  ├─ manifest.py            npm root package.json sections, both trees (no pyproject)
 │  ├─ pypi_metadata.py       PyPI metadata changes
 │  └─ ast.py                 Python symbol diff (functions/classes/imports)
 │
-├─ rules/                    18 rules in six families
+├─ rules/                    18 rules in four families (1–4) across seven family modules
 │  ├─ runner.py              rule executor
 │  ├─ registry.py            rule registry
 │  ├─ scan.py                source scanning helpers
@@ -116,7 +118,7 @@ src/pkgwatch/
 └─ ingest/                   currently only __init__.py (planned feed layer)
 ```
 
-## `tests/` — 259 files
+## `tests/` — 260 tracked files (261 with untracked `unit/test_cli_signals.py`)
 
 ```
 tests/
@@ -130,7 +132,7 @@ tests/
 │  ├─ lock/                  4 (run, run_records, baseline, report)
 │  ├─ lockfile/              2 (parser, plan)
 │  ├─ rules/                 8 (families + registry/runner/scan)
-│  ├─ sandbox/               9 + helpers (tar/zip rejection, links, size)
+│  ├─ sandbox/               8 + helpers (tar/zip rejection, links, size)
 │  ├─ score/                 1
 │  ├─ store/                 2 (migrations, repo)
 │  ├─ version/               3 (parse, compare, properties)
@@ -146,8 +148,8 @@ tests/
 ├─ support/                  fake registries, archives, lockfiles, record helpers
 └─ fixtures/
    ├─ rules/                 143 small rule fixtures
-   ├─ packages/              16 npm package trees
-   └─ pypi-packages/         13 PyPI package trees
+   ├─ packages/              2 npm package trees (16 files)
+   └─ pypi-packages/         2 PyPI package trees (13 files)
 ```
 
 ## Docs, examples, and data
@@ -183,6 +185,7 @@ data/
 
 ## Request flow
 
-`cli.py` → `fetch/` (registry) → `sandbox/` (extract) → `diff/` + `rules/` → `score/` → report.
+`cli.py:main()` (SIGINT→130, closed pipe→0) → `_main` → `fetch/` (registry) → `sandbox/`
+(extract) → `diff/` → `rules/` (all-experimental gating) → `score/` → report.
 With `--record-dir`: `dataset/record.py` → `features/` → `labeling/` → `dataset/split.py`
 → `export.py` → `validate.py`.

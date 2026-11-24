@@ -107,7 +107,7 @@ _ENV_PATTERNS: tuple[scan.Pattern, ...] = (
 
 @registry.register(
     rule_id=JS_CHILD_PROCESS_ADDED,
-    rule_version=2,
+    rule_version=3,
     severity="high",
     ecosystems=("npm",),
     families=(RuleFamily.DANGEROUS_CAPABILITY,),
@@ -134,7 +134,7 @@ def js_child_process_added(ctx: DiffContext) -> list[Finding]:
     return scan.capability_findings(
         ctx,
         rule_id=JS_CHILD_PROCESS_ADDED,
-        rule_version=2,
+        rule_version=3,
         severity=Severity.HIGH,
         patterns=_CHILD_PROCESS_PATTERNS,
     )
@@ -142,7 +142,7 @@ def js_child_process_added(ctx: DiffContext) -> list[Finding]:
 
 @registry.register(
     rule_id=DYNAMIC_EVAL_ADDED,
-    rule_version=2,
+    rule_version=3,
     severity="high",
     ecosystems=("npm",),
     families=(RuleFamily.DANGEROUS_CAPABILITY,),
@@ -166,7 +166,7 @@ def dynamic_eval_added(ctx: DiffContext) -> list[Finding]:
     return scan.capability_findings(
         ctx,
         rule_id=DYNAMIC_EVAL_ADDED,
-        rule_version=2,
+        rule_version=3,
         severity=Severity.HIGH,
         patterns=_DYNAMIC_EVAL_PATTERNS,
     )
@@ -174,7 +174,7 @@ def dynamic_eval_added(ctx: DiffContext) -> list[Finding]:
 
 @registry.register(
     rule_id=NET_ACCESS_ADDED,
-    rule_version=2,
+    rule_version=3,
     severity="medium",
     ecosystems=("npm",),
     families=(RuleFamily.DANGEROUS_CAPABILITY,),
@@ -201,7 +201,7 @@ def net_access_added(ctx: DiffContext) -> list[Finding]:
     return scan.capability_findings(
         ctx,
         rule_id=NET_ACCESS_ADDED,
-        rule_version=2,
+        rule_version=3,
         severity=Severity.MEDIUM,
         patterns=_NET_ACCESS_PATTERNS,
     )
@@ -209,7 +209,7 @@ def net_access_added(ctx: DiffContext) -> list[Finding]:
 
 @registry.register(
     rule_id=FS_WRITE_OUTSIDE_PACKAGE_ADDED,
-    rule_version=1,
+    rule_version=2,
     severity="medium",
     ecosystems=("npm",),
     families=(RuleFamily.DANGEROUS_CAPABILITY,),
@@ -233,7 +233,7 @@ def fs_write_outside_package_added(ctx: DiffContext) -> list[Finding]:
     return scan.capability_findings(
         ctx,
         rule_id=FS_WRITE_OUTSIDE_PACKAGE_ADDED,
-        rule_version=1,
+        rule_version=2,
         severity=Severity.MEDIUM,
         patterns=_FS_WRITE_PATTERNS,
     )
@@ -241,7 +241,7 @@ def fs_write_outside_package_added(ctx: DiffContext) -> list[Finding]:
 
 @registry.register(
     rule_id=ENV_ENUMERATION_ADDED,
-    rule_version=2,
+    rule_version=3,
     severity="low",
     ecosystems=("npm",),
     families=(RuleFamily.DANGEROUS_CAPABILITY,),
@@ -265,7 +265,7 @@ def env_enumeration_added(ctx: DiffContext) -> list[Finding]:
     return scan.capability_findings(
         ctx,
         rule_id=ENV_ENUMERATION_ADDED,
-        rule_version=2,
+        rule_version=3,
         severity=Severity.LOW,
         patterns=_ENV_PATTERNS,
     )

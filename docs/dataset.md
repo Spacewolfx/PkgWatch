@@ -31,11 +31,11 @@ Exclusions, always counted, never silent:
 | Case | Behaviour |
 |---|---|
 | Brand-new package (no old artifact) | not recorded; `reason="new_package"`. An old-side digest is never invented. |
-| `analysis_incomplete` | recorded for audit value, **never exported**; counted as `skipped_incomplete`. |
+| `analysis_incomplete` | no record is written: `compare`/`lock` exit 2 with `ANALYSIS_INCOMPLETE`. An already-flagged record is **never exported**; counted as `skipped_incomplete`. |
 | Fetch / archive failure | no record; the existing stable error code is unchanged. |
 
-`lock` treats a failed record write as a per-pair skip (`record_errors` in its JSON report)
-and never aborts the run. `--plan --record-dir` is refused with
+`lock` treats a failed record write as a per-pair skip and never aborts the run:
+`record_errors` appears in text, Markdown and JSON. `--plan --record-dir` is refused with
 `RECORD_OPTIONS_CONFLICT`; plan mode analyses nothing, so there would be nothing to record.
 
 ## 2. Label
@@ -121,8 +121,8 @@ incomplete record. With `--json` the payload is
 `{ok, record_count, errors: [{code, line, detail}]}`, sorted by `(line, code)`.
 
 Exit codes: `2` for any tool error, `1` for invalid content, `0` when valid. That `1` is the
-single deliberate exception to the tool's "any error is 2" rule (SPEC §6.4): an invalid
-dataset is a verdict about the data, not a crashed tool.
+single deliberate exception to the tool's "any error is 2" rule: an invalid dataset is a
+verdict about the data, not a crashed tool.
 
 ## 6. Features
 

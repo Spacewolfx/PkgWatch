@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from pkgwatch.models import DIFF_LINE_MAX_CHARS
+from pkgwatch.models import DIFF_LINE_MAX_CHARS, DiffContext, Ecosystem, Finding, Severity
 from pkgwatch.rules import scan
 from pkgwatch.rules.family2_capability import (
     fs_write_outside_package_added,
@@ -85,3 +85,85 @@ def test_old_tree_has_capability_clips_long_lines(tmp_path: Path) -> None:
 
     assert scan.old_tree_has_capability(ctx_beyond, pattern) is False
     assert scan.old_tree_has_capability(ctx_within, pattern) is True
+
+
+def _capability(ctx: DiffContext, suffixes: tuple[str, ...], expression: str) -> list[Finding]:
+    return scan.capability_findings(
+        ctx,
+        rule_id="TEST_CAPABILITY",
+        rule_version=1,
+        severity=Severity.HIGH,
+        patterns=[scan.pattern("test_pattern", expression)],
+        suffixes=suffixes,
+    )
+
+
+REQUIRE_CHILD_PROCESS = r"""require\s*\(\s*["\x27]child_process["\x27]\s*\)"""
+
+
+def test_comment_only_lines_are_not_capabilities(tmp_path: Path) -> None:
+    # A note that mentions a capability is not the package gaining it.
+    ctx = ctx_from_files(
+        tmp_path,
+        {"package/old.js": b"var x = 1;\n"},
+        {
+            "package/note.js": b'// require("child_process")\n',
+            "package/block.js": b'/*\n * require("child_process")\n */\n',
+        },
+    )
+
+    assert _capability(ctx, scan.JS_SUFFIXES, REQUIRE_CHILD_PROCESS) == []
+
+
+def test_a_trailing_comment_is_ignored_but_the_code_is_not(tmp_path: Path) -> None:
+    ctx = ctx_from_files(
+        tmp_path,
+        {"package/old.js": b"var x = 1;\n"},
+        {
+            "package/note.js": b'var x = 1; // require("child_process")\n',
+            "package/real.js": b'const cp = require("child_process"); // used\n',
+        },
+    )
+
+    findings = _capability(ctx, scan.JS_SUFFIXES, REQUIRE_CHILD_PROCESS)
+    assert [finding.path for finding in findings] == ["package/real.js"]
+
+
+def test_a_comment_marker_inside_a_string_does_not_cut_the_line(tmp_path: Path) -> None:
+    # "http://" must not be read as the start of a comment: the require after it counts.
+    ctx = ctx_from_files(
+        tmp_path,
+        {"package/old.js": b"var x = 1;\n"},
+        {"package/net.js": b'var u = "http://x"; const cp = require("child_process");\n'},
+    )
+
+    assert len(_capability(ctx, scan.JS_SUFFIXES, REQUIRE_CHILD_PROCESS)) == 1
+
+
+def test_a_python_comment_is_not_a_capability(tmp_path: Path) -> None:
+    ctx = ctx_from_files(
+        tmp_path,
+        {"package/old.py": b"x = 1\n"},
+        {
+            "package/note.py": b'# os.system("ls")\n',
+            "package/real.py": b'os.system("ls")  # run\n',
+        },
+        ecosystem=Ecosystem.PYPI,
+    )
+
+    findings = _capability(ctx, scan.PYPI_SUFFIXES, r"os\.system\s*\(")
+    assert [(finding.path, finding.line_start) for finding in findings] == [("real.py", 1)]
+
+
+def test_a_comment_in_the_old_tree_does_not_hide_a_new_capability(tmp_path: Path) -> None:
+    # The old-tree check must ignore comments the same way, or a note in the previous
+    # version would suppress the real addition in the new one.
+    old_line = b'// note: require("child_process")\n'
+    ctx = ctx_from_files(
+        tmp_path,
+        {"package/old.js": old_line},
+        {"package/old.js": old_line, "package/new.js": b'const cp = require("child_process");\n'},
+    )
+
+    findings = _capability(ctx, scan.JS_SUFFIXES, REQUIRE_CHILD_PROCESS)
+    assert [finding.path for finding in findings] == ["package/new.js"]

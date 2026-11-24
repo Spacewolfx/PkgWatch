@@ -22,6 +22,17 @@ EXPERIMENTAL_FAMILIES: frozenset[RuleFamily] = frozenset(
 )
 
 
+def all_experimental(families: Iterable[RuleFamily]) -> bool:
+    """True when a rule declares families and every one of them is experimental.
+
+    A rule that mixes an experimental family with a stable one still runs by default:
+    gating it off would hide its stable signal behind a flag that names only the other
+    half. A rule with no family declares nothing, so it is not experimental either.
+    """
+    active = frozenset(families)
+    return bool(active) and active <= EXPERIMENTAL_FAMILIES
+
+
 class RuleContractViolation(Exception):
     """A rule returned a finding that is not its own."""
 
@@ -61,13 +72,13 @@ def run_rules(
 ) -> list[Finding]:
     """Run every rule registered for ``ctx.ecosystem`` and return the findings.
 
-    Rules whose families are all experimental are skipped unless
-    ``experimental=True``.
+    A rule runs by default unless every one of its families is experimental (see
+    :func:`all_experimental`).
     """
     active = registry if registry is not None else DEFAULT
     findings = list(_view_errors(ctx))
     for rule in active.select(ctx.ecosystem):
-        if not experimental and not EXPERIMENTAL_FAMILIES.isdisjoint(rule.families):
+        if not experimental and all_experimental(rule.families):
             continue
         findings.extend(_run(rule, ctx))
     return findings

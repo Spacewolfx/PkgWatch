@@ -8,7 +8,12 @@ from pathlib import Path
 from pkgwatch.models import DiffContext, Ecosystem, Finding, RuleFamily, SandboxLimits, Severity
 from pkgwatch.rules.guard import guard
 from pkgwatch.rules.registry import Registry, Rule
-from pkgwatch.rules.runner import RULE_ENGINE_RULE_ID, analysis_incomplete, run_rules
+from pkgwatch.rules.runner import (
+    RULE_ENGINE_RULE_ID,
+    all_experimental,
+    analysis_incomplete,
+    run_rules,
+)
 from tests.support.context import ctx_from_files
 from tests.support.fixtures import rule_context
 
@@ -236,15 +241,53 @@ def test_a_view_the_diff_could_not_read_is_reported(tmp_path: Path) -> None:
     context = ctx_from_files(
         tmp_path,
         {"package/a.js": b"1234567890\n"},
-        {"package/b.js": b"abcdefghij\n"},
-        limits=SandboxLimits(max_total_uncompressed_bytes=15),
+        {"package/b.js": b"abcdefghij\n", "package/z.js": b"abcdefghij\n"},
+        limits=SandboxLimits(),
+        view_limits=SandboxLimits(max_total_uncompressed_bytes=15),
     )
-    assert [error.path for error in context.parse_errors] == ["package/b.js"]
+    assert [error.path for error in context.parse_errors] == ["package/z.js"]
 
     findings = run_rules(context)
     engine = [finding for finding in findings if finding.rule_id == RULE_ENGINE_RULE_ID]
     assert [(finding.path, finding.details["kind"]) for finding in engine] == [
-        ("package/b.js", "budget")
+        ("package/z.js", "budget")
     ]
     assert all(finding.severity is Severity.INFO for finding in engine)
     assert analysis_incomplete(findings) is True
+
+
+def test_all_experimental_needs_at_least_one_family_and_no_stable_one() -> None:
+    assert all_experimental(()) is False
+    assert all_experimental((RuleFamily.METADATA,)) is True
+    assert all_experimental((RuleFamily.OBFUSCATION, RuleFamily.METADATA)) is True
+    assert all_experimental((RuleFamily.METADATA, RuleFamily.DANGEROUS_CAPABILITY)) is False
+
+
+def test_a_mixed_family_rule_runs_by_default(tmp_path: Path) -> None:
+    # Gating on "any experimental family" would silently disable a rule that also
+    # carries a stable signal; the gate is "every family is experimental".
+    context = ctx_from_files(tmp_path, *TWO_FILES)
+    calls: list[str] = []
+
+    def _record(rule_id: str) -> Callable[[DiffContext], list[Finding]]:
+        def fn(inner: DiffContext) -> list[Finding]:
+            calls.append(rule_id)
+            return []
+
+        return fn
+
+    registry = _registry(
+        _rule(
+            "X_MIXED_RULE",
+            _record("X_MIXED_RULE"),
+            families=(RuleFamily.OBFUSCATION, RuleFamily.DANGEROUS_CAPABILITY),
+        ),
+        _rule("X_METADATA_RULE", _record("X_METADATA_RULE"), families=(RuleFamily.METADATA,)),
+    )
+
+    run_rules(context, registry=registry)
+    assert calls == ["X_MIXED_RULE"]
+
+    calls.clear()
+    run_rules(context, registry=registry, experimental=True)
+    assert calls == ["X_MIXED_RULE", "X_METADATA_RULE"]

@@ -182,14 +182,15 @@ Per file, per rule, `try/except Exception` around the analysis body. An exceptio
 details={"exception": <class name>, "rule_id": <origin>})` and the worker continues with the
 next file. The exception class name and the path are recorded; the traceback text and the
 file content are **not**, because a parser error message can echo hostile source. A release
-whose analysis produced `RULE_ENGINE_ERROR` findings is marked `analysis_incomplete=True` and
-is excluded from dataset export — partial coverage in a labeled dataset is a silent lie.
+whose analysis produced `RULE_ENGINE_ERROR` findings stops with `ANALYSIS_INCOMPLETE`
+(exit 2); no record is written, so partial coverage never reaches export — partial coverage
+in a labeled dataset is a silent lie.
 
 The same record shape carries the two engine-level cases that are not a rule's fault: a rule
 returning a finding under a foreign `rule_id` (details `exception="RuleContractViolation"`) and
 a file whose view the diff stage could not read (details `stage="diff"`, `kind` = the
 `ParseErrorKind`, `reason` = the first 64 characters of its detail). Both mean "this release was
-not fully analysed", so both flip `analysis_incomplete`.
+not fully analysed": the CLI stops with `ANALYSIS_INCOMPLETE` and writes no record.
 
 ### 4.5 Families
 
@@ -248,8 +249,9 @@ defensive parser is used by the "package.json changes" section and by
 PyPI-specific rules, disjoint from the npm rules by ecosystem; their current versions are
 in [docs/rules.md](docs/rules.md). They are pure `DiffContext -> list[Finding]` functions,
 follow §4.1/§4.4, and share the `w1` score table with npm (§5). Capability matching reuses
-the same added-lines contract as §4.5 family 2, over `.py` files plus the build manifests
-`setup.py`, `pyproject.toml`, `setup.cfg` at depth <= 2.
+the same added-lines contract as §4.5 family 2 over `.py` files. The build manifests
+`setup.py`, `pyproject.toml`, `setup.cfg` at depth <= 2 are read only by
+`PYPI_INSTALL_HOOK_ADDED`.
 `PYPI_DEPENDENCY_ADDED` reads the shipped `PKG-INFO`/`METADATA` document (never the
 registry document) and is experimental-gated by the runner, exactly like npm's
 `DEPENDENCY_ADDED` (§4.5.1); no other PyPI rule is experimental.
@@ -265,8 +267,8 @@ registry document) and is experimental-gated by the runner, exactly like npm's
 **Operator decision (2026-11-16, scope clarification, not measured):** `os.getenv(` and
 bare `getenv(` are deliberately **not** matched. Each names one key, which is ordinary
 configuration; the rule targets reads of the whole environment. The earlier table wording
-listing those spellings was over-broad. `rule_version` stays 2 because the detection
-semantics have not changed.
+listing those spellings was over-broad. `rule_version` is 3: a later left-boundary fix
+changed detection semantics (a dotted or longer prefix no longer matches).
 | `PYPI_DEPENDENCY_ADDED` | 4 metadata | `low` | `Requires-Dist` names added in the new tree's `PKG-INFO`/`METADATA` vs the old tree's; one package-level finding per added name |
 
 ## 5. Score — weights and computation
@@ -545,7 +547,8 @@ capture and `run_id`.
 `compare` reuses the verified download cache of §9.1(9) for both ecosystems (2026-11-10):
 `[fetch].cache_dir` overrides the location, `--no-cache` disables reads and writes for one
 run. `rules --ecosystem npm|pypi` filters the catalog, and every catalog entry lists its
-ecosystems.
+ecosystems. Both entry points route through `main()`: SIGINT exits `130` and a closed stdout
+pipe exits `0`; neither is an analysis verdict.
 
 ### 9.1 `pkgwatch lock` — operator decision, initial untuned values, not measured (2026-11-07)
 
@@ -599,7 +602,8 @@ changed, show what the update changes at install time and in code, in one short 
    `[lock].cache_dir` overrides the location.
 10. Retry (L2b): only 429, 5xx and timeouts are retried, with capped exponential backoff
     (`[lock].max_attempts`, `retry_base_delay_seconds`, `retry_max_delay_seconds`). A
-    `Retry-After` delay is honoured, bounded by `retry_max_delay_seconds`. Every request is
+    `Retry-After` delay is honoured in seconds or HTTP-date form, bounded by
+    `retry_max_delay_seconds`. Every request is
     preceded by the polite `[lock].request_delay_seconds`. Other failures and other statuses are
     never retried.
 11. Unanalysed policy (L2b, extended by L2c): a changed pair or brand-new package that cannot
@@ -704,8 +708,9 @@ order; unbalanced or unparseable sets stay unpaired (`MULTIPLE_VERSIONS`).
    ecosystem, scored by the unchanged `w1` table. `PYPI_DEPENDENCY_ADDED` reads the
    shipped `PKG-INFO`/`METADATA`, never registry metadata.
 6. **Gating (resolves the plan's §7 ambiguity).** The runner's family gating
-   (`EXPERIMENTAL_FAMILIES = {OBFUSCATION, METADATA}`) stays ecosystem-agnostic and
-   unchanged, so `PYPI_DEPENDENCY_ADDED` is off by default and surfaces under
+   (`EXPERIMENTAL_FAMILIES = {OBFUSCATION, METADATA}`; a rule is skipped only when all its
+   families are experimental) stays ecosystem-agnostic, so `PYPI_DEPENDENCY_ADDED` is off
+   by default and surfaces under
    `--experimental`, exactly like npm's `DEPENDENCY_ADDED`. §7's "no PyPI finding is
    experimental in v1" is read as "no new gating concept". The `compare` JSON
    `schema_version` is 3; `ecosystem` reads `"pypi"`, the npm-only blocks
@@ -719,7 +724,7 @@ order; unbalanced or unparseable sets stay unpaired (`MULTIPLE_VERSIONS`).
 | A1 | M1 needs persistence for the watchlist and the ingest cursor, but `store/` is scheduled for M2 | Decision requested | Recommendation: pull forward a **minimal** `store/` (tables `releases`, `watchlist`, `runs` only) in M1; M2 adds `findings`/`scores`/`file_changes`. The alternative — JSON files in M1 — becomes throwaway work. |
 | A2 | npm change-stream endpoint for global ingestion | 404 today | Out of scope for M1; TODO confirm a supported feed in M4 |
 | A3 | crates.io download 303 target, PyPI per-version JSON | Not probed | TODO verify before M4 fetch implementation |
-| A4 | PyPI packages without an sdist (wheel-only) | Certain to exist | sdist preferred, wheel fallback; a release with no analyzable artifact gets `analysis_incomplete=True` and is excluded from export — no invented findings |
+| A4 | PyPI packages without an sdist (wheel-only) | Certain to exist | sdist preferred, wheel fallback; a release with no artifact fails with `ARTIFACT_UNAVAILABLE` (exit 2) and writes no record — no invented findings |
 | A5 | npm `/-/rss?<name>` scoping | Response does not prove scoping | Unused; watchlist polling instead |
 | A6 | Severity→base-weight numbers in §5 | Design judgement, not empirically tuned | `w1`; weights live in `config.py`, versioned, and `eval/` is where they get challenged |
 | A7 | `max_*` default limits in §6.5 | Chosen for typical packages | Revisit with real registry corpus stats in M4; all are config, none are literals |

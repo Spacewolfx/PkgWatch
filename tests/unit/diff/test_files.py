@@ -31,10 +31,12 @@ def build(
     old_entries: list[Entry],
     new_entries: list[Entry],
     limits: SandboxLimits | None = None,
+    *,
+    extract_limits: SandboxLimits | None = None,
 ) -> DiffContext:
     case = Path(tempfile.mkdtemp(dir=tmp_path))
-    old = extract_tree(case, "old", old_entries, limits)
-    new = extract_tree(case, "new", new_entries, limits)
+    old = extract_tree(case, "old", old_entries, extract_limits)
+    new = extract_tree(case, "new", new_entries, extract_limits)
     return build_diff_context(
         ecosystem=Ecosystem.NPM,
         package_name="demo-pkg",
@@ -266,9 +268,9 @@ def test_a_file_missing_on_disk_becomes_a_parse_error_not_a_crash(tmp_path: Path
     assert types(ctx)["package/index.js"] is ChangeType.MODIFIED
 
 
-def test_context_view_budget_marks_the_context_incomplete(tmp_path: Path) -> None:
-    # Each tree fits the sandbox cap on its own; the two together do not, so the
-    # differ stops reading once the shared view budget is spent.
+def test_each_tree_gets_its_own_view_allowance(tmp_path: Path) -> None:
+    # Each tree fits the sandbox cap on its own; together they exceed one cap. The
+    # allowance is per tree, so nothing is skipped and the context stays complete.
     limits = SandboxLimits(max_total_uncompressed_bytes=16)
     ctx = build(
         tmp_path,
@@ -279,10 +281,84 @@ def test_context_view_budget_marks_the_context_incomplete(tmp_path: Path) -> Non
         ],
         limits,
     )
-    assert ctx.views_incomplete is True
-    assert any(error.kind is ParseErrorKind.BUDGET for error in ctx.parse_errors)
-    assert "package/a.js" not in ctx.files_new
+    assert ctx.views_incomplete is False
+    assert ctx.parse_errors == ()
+    assert "package/a.js" in ctx.files_old
+    assert "package/a.js" in ctx.files_new
     assert "package/c.js" in ctx.files_new
+
+
+def test_view_allowance_is_still_enforced_within_one_tree(tmp_path: Path) -> None:
+    # Two 11-byte files do not fit one tree's 16-byte allowance: the second is skipped
+    # and recorded, so a genuine gap is still stated instead of silently ignored.
+    limits = SandboxLimits(max_total_uncompressed_bytes=16)
+    ctx = build(
+        tmp_path,
+        [
+            Entry("package/a.js", b"a" * 10 + b"\n"),
+            Entry("package/b.js", b"b" * 10 + b"\n"),
+        ],
+        [Entry("package/a.js", b"x" * 10 + b"\n")],
+        limits,
+        extract_limits=SandboxLimits(),
+    )
+    assert ctx.views_incomplete is True
+    assert [error.path for error in ctx.parse_errors] == ["package/b.js"]
+    assert all(error.kind is ParseErrorKind.BUDGET for error in ctx.parse_errors)
+    assert "package/b.js" not in ctx.files_old
+    assert "package/a.js" in ctx.files_old
+
+
+def test_binary_content_does_not_spend_the_view_allowance(tmp_path: Path) -> None:
+    # The 4 KiB icon is binary and can never become a text view; charging it against the
+    # 16-byte allowance would drop z.js and mark the analysis incomplete.
+    limits = SandboxLimits(max_total_uncompressed_bytes=16)
+    ctx = build(
+        tmp_path,
+        [],
+        [
+            Entry("package/a.png", b"\x00" * 4096),
+            Entry("package/z.js", b"var x = 1;\n"),
+        ],
+        limits,
+        extract_limits=SandboxLimits(),
+    )
+    assert ctx.views_incomplete is False
+    assert ctx.parse_errors == ()
+    assert "package/z.js" in ctx.files_new
+    assert "package/a.png" not in ctx.files_new
+    assert types(ctx)["package/a.png"] is ChangeType.ADDED
+
+
+def test_unchanged_path_is_read_only_from_the_old_tree(tmp_path: Path) -> None:
+    # Reading keep.js a second time would exhaust the new tree's allowance and drop
+    # add.js; the unchanged path's new view would be discarded anyway.
+    limits = SandboxLimits(max_total_uncompressed_bytes=16)
+    ctx = build(
+        tmp_path,
+        [Entry("package/keep.js", b"0123456789")],
+        [Entry("package/keep.js", b"0123456789"), Entry("package/add.js", b"addadd!\n")],
+        limits,
+        extract_limits=SandboxLimits(),
+    )
+    assert ctx.parse_errors == ()
+    assert set(ctx.files_old) == {"package/keep.js"}
+    assert set(ctx.files_new) == {"package/add.js"}
+    assert types(ctx)["package/keep.js"] is ChangeType.UNCHANGED
+
+
+def test_identical_binary_content_is_unchanged_not_binary(tmp_path: Path) -> None:
+    # Same bytes on both sides is not a change, even when the bytes are not text.
+    ctx = build(
+        tmp_path,
+        [Entry("package/blob.bin", b"\x00\x01\x02\x03")],
+        [Entry("package/blob.bin", b"\x00\x01\x02\x03")],
+    )
+    change = next(c for c in ctx.changes if c.path_new == "package/blob.bin")
+    assert change.change_type is ChangeType.UNCHANGED
+    assert change.is_text is False
+    assert ctx.files_old == {}
+    assert ctx.files_new == {}
 
 
 def test_first_release_treats_every_file_as_added(tmp_path: Path) -> None:

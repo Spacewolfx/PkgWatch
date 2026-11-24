@@ -77,7 +77,7 @@ from pkgwatch.models import (
 )
 from pkgwatch.rules import RULES, explanations_for, families_by_rule_id, rule_set_version
 from pkgwatch.rules.runner import (
-    EXPERIMENTAL_FAMILIES,
+    all_experimental,
     analysis_incomplete,
     run_rules,
 )
@@ -616,6 +616,36 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(
+    argv: list[str] | None = None,
+    *,
+    client: HttpClient | None = None,
+    config: Config | None = None,
+) -> int:
+    """The console entry point: signal-safe exit codes around :func:`_main`.
+
+    Both real entry points — the `pkgwatch` console script and `python -m pkgwatch` — call
+    this, so SIGINT and a closed downstream pipe are handled here, next to the only code
+    that runs.
+    """
+    try:
+        return _main(argv, client=client, config=config)
+    except KeyboardInterrupt:
+        # Conventional exit code for SIGINT.
+        return 130
+    except BrokenPipeError:
+        # Downstream closed the pipe (e.g. `pkgwatch ... | head`); not an analysis error.
+        # Point stdout at devnull so the interpreter's shutdown flush does not re-raise; a
+        # stream without a descriptor has nothing to flush, so leave it alone.
+        with contextlib.suppress(OSError, ValueError):
+            null = os.open(os.devnull, os.O_WRONLY)
+            try:
+                os.dup2(null, sys.stdout.fileno())
+            finally:
+                os.close(null)
+        return 0
+
+
+def _main(
     argv: list[str] | None = None,
     *,
     client: HttpClient | None = None,
@@ -1619,7 +1649,7 @@ def _one_line(text: str) -> str:
 
 def _experimental_marker(rule_id: str, families: Mapping[str, frozenset[RuleFamily]]) -> str:
     """Suffix for an experimental rule reference in explanations output."""
-    if not EXPERIMENTAL_FAMILIES.isdisjoint(families.get(rule_id, frozenset())):
+    if all_experimental(families.get(rule_id, frozenset())):
         return " (experimental)"
     return ""
 
@@ -2153,28 +2183,33 @@ def _sarif_result(
     target_lockfile: str,
 ) -> dict[str, Any]:
     versions = _sarif_versions(package, old_version, new_version)
+    # The finding names a file inside the package tarball, which does not exist in the
+    # operator's checkout, and the lockfile line of a package is unknown: the location is
+    # the lockfile itself (directory kept when the argument is repo-relative) with no
+    # region, instead of pinning every result to line 1 of a flattened file name.
+    lockfile = _lockfile_uri(target_lockfile)
     return {
         "ruleId": finding["rule_id"],
         "level": _SARIF_LEVEL_MAP.get(finding["severity"], "warning"),
         "message": {"text": f"{versions} ({finding['path'] or '-'}) {finding['evidence']}"},
-        "locations": [
-            {
-                "physicalLocation": {
-                    "artifactLocation": {"uri": Path(target_lockfile).name},
-                    "region": {"startLine": 1},
-                }
-            }
-        ],
+        "locations": [{"physicalLocation": {"artifactLocation": {"uri": lockfile}}}],
         "properties": {
             "package": package,
             "old_version": old_version,
             "new_version": new_version,
+            "lockfile": lockfile,
             "package_path": finding["path"],
             "package_line": finding["line"],
             "severity": finding["severity"],
             "security-severity": _SARIF_SECURITY_SEVERITY_MAP.get(finding["severity"], "5.0"),
         },
     }
+
+
+def _lockfile_uri(target_lockfile: str) -> str:
+    """The lockfile as a repo-relative SARIF URI; an absolute argument keeps only its name."""
+    path = Path(target_lockfile)
+    return path.name if path.is_absolute() else path.as_posix()
 
 
 def _sarif_versions(package: str, old_version: str | None, new_version: str) -> str:
@@ -2260,16 +2295,3 @@ def _error(
         # The disclaimer is unconditional in text mode, including on a failed run.
         print(DISCLAIMER)
     return 2
-
-
-if __name__ == "__main__":
-    try:
-        raise SystemExit(main())
-    except KeyboardInterrupt:
-        # Conventional exit code for SIGINT.
-        raise SystemExit(130) from None
-    except BrokenPipeError:
-        # Downstream closed the pipe (e.g. `pkgwatch ... | head`); not an analysis error.
-        # Redirect stdout to devnull so Python's shutdown flush doesn't re-raise.
-        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
-        raise SystemExit(0) from None

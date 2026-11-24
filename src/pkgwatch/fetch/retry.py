@@ -11,6 +11,8 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 
 from pkgwatch.fetch.npm import FetchTimeout, HttpClient, HttpResponse
 
@@ -67,16 +69,32 @@ class RetryingClient:
 
 
 def _retry_after_seconds(headers: Mapping[str, str]) -> float | None:
+    """``Retry-After`` in either spelling (RFC 9110 §10.2.3): seconds or an HTTP-date.
+
+    A date in the past means "retry now", which the backoff's ``max`` turns into the
+    ordinary delay; an unparseable value is ignored the same way.
+    """
     raw = next(
         (value for key, value in headers.items() if key.casefold() == "retry-after"),
         None,
     )
     if raw is None:
         return None
+    text = raw.strip()
     try:
-        seconds = float(raw.strip())
+        seconds = float(text)
     except ValueError:
-        return None
+        return _http_date_seconds(text)
     if seconds < 0 or seconds != seconds:  # NaN is not a usable delay
         return None
     return seconds
+
+
+def _http_date_seconds(text: str) -> float | None:
+    try:
+        when = parsedate_to_datetime(text)
+    except (TypeError, ValueError):
+        return None
+    if when.tzinfo is None:  # an obsolete -0000 zone parses as naive; HTTP dates are UTC
+        when = when.replace(tzinfo=UTC)
+    return max(0.0, (when - datetime.now(UTC)).total_seconds())

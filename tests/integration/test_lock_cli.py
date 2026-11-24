@@ -1288,6 +1288,34 @@ def test_sarif_output_for_an_installer_pair(
     assert {item["id"] for item in run["tool"]["driver"]["rules"]} == FOUR_RULES
     assert run["properties"]["disclaimer"] == DISCLAIMER
     assert run["properties"]["measured"] is False
+    # The finding's own file lives inside the tarball, so the location is the lockfile the
+    # operator edits: no invented line 1, and the package file/line stay in properties.
+    locations = [item["locations"][0]["physicalLocation"] for item in run["results"]]
+    assert {location["artifactLocation"]["uri"] for location in locations} == {"new.json"}
+    assert all("region" not in location for location in locations)
+    assert all(item["properties"]["lockfile"] == "new.json" for item in run["results"])
+
+
+def test_sarif_lock_keeps_the_lockfile_directory_for_a_relative_argument(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A CI checkout passes relative paths; the report must not flatten sub/old.json to
+    # old.json and point at a file that does not exist in the repository root.
+    registry = case_registry(tmp_path, INSTALLER, name="installer-pkg")
+    client = MultiRegistry([registry])
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    write_lockfile(sub / "old.json", {node_modules("installer-pkg"): registry_entry(registry, OLD)})
+    write_lockfile(sub / "new.json", {node_modules("installer-pkg"): registry_entry(registry, NEW)})
+    monkeypatch.chdir(tmp_path)
+
+    code, out, _ = _run(capsys, client, Path("sub/old.json"), Path("sub/new.json"), "--sarif")
+    run = json.loads(out)["runs"][0]
+
+    assert code == 1
+    locations = [item["locations"][0]["physicalLocation"] for item in run["results"]]
+    assert {location["artifactLocation"]["uri"] for location in locations} == {"sub/new.json"}
+    assert all(item["properties"]["lockfile"] == "sub/new.json" for item in run["results"])
 
 
 def test_sarif_includes_new_package_findings(

@@ -61,6 +61,7 @@ def _build(
     new_analyses: tuple[NewPackageAnalysis, ...] = (),
     new_analysed: bool = True,
     ignored_reasons: dict[str, str] | None = None,
+    record_errors: int = 0,
 ) -> LockReport:
     result = LockRunResult(
         plan=LockPlan(
@@ -75,6 +76,7 @@ def _build(
         pairs=pairs,
         new_analyses=new_analyses,
         new_analysed=new_analysed,
+        record_errors=record_errors,
     )
     return build_report(
         result,
@@ -398,3 +400,34 @@ def test_markdown_never_shows_a_dash_pair_for_package_level_findings() -> None:
 
     assert "(package-level)" in md
     assert "-:-" not in md
+
+
+def test_a_record_write_failure_is_visible_in_text_and_markdown() -> None:
+    # The JSON has carried record_errors since the --record-dir seam; the human formats
+    # must not hide a write that failed, or an operator believes the dataset is complete.
+    report = _build(_pair(), record_errors=2)
+    assert report["record_errors"] == 2
+
+    for rendered in (format_text(report), format_markdown(report)):
+        assert "2 record(s) could not be written" in rendered
+
+    clean = _build(_pair())
+    assert "record_errors" not in clean
+    for rendered in (format_text(clean), format_markdown(clean)):
+        assert "record(s) could not be written" not in rendered
+
+
+def test_markdown_lists_parse_problems_for_a_failed_new_package() -> None:
+    added = NewPackage("added-pkg", "1.0.0", None)
+    analysis = NewPackageAnalysis(
+        name="added-pkg",
+        version="1.0.0",
+        error="ANALYSIS_INCOMPLETE",
+        parse_problems=("TARBALL_UNREADABLE",),
+    )
+
+    md = format_markdown(_build(new_packages=(added,), new_analyses=(analysis,)))
+
+    assert "failed pairs (1)" in md
+    assert "`added-pkg` 1.0.0: ANALYSIS_INCOMPLETE" in md
+    assert "parse problems: TARBALL_UNREADABLE" in md

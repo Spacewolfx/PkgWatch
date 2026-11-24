@@ -498,22 +498,26 @@ def test_sandbox_rejection_exits_two_with_its_stable_code(
     assert "score:" not in out
 
 
-def test_analysis_incomplete_exits_two_never_zero(
+def test_each_tree_fits_its_own_view_allowance(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A shared diff view budget forces one ParseError -> RULE_ENGINE_ERROR -> exit 2."""
+    """Both trees fit the sandbox cap individually, so no view may be dropped.
+
+    The two trees together exceed one cap; with a shared allowance that used to end in
+    ANALYSIS_INCOMPLETE / exit 2 for a package that extracted cleanly.
+    """
     registry = make_registry(tmp_path, BENIGN)
     both_sides = _tree_bytes(BENIGN, "old") + _tree_bytes(BENIGN, "new")
     config = Config(sandbox=SandboxLimits(max_total_uncompressed_bytes=both_sides - 1))
 
     code, out, err = _run(capsys, registry, "--json", config=config)
 
-    assert code == 2
-    assert err.strip() == "ANALYSIS_INCOMPLETE"
+    assert code == 0
+    assert err == ""
     payload = json.loads(out)
-    assert payload["error"] == "ANALYSIS_INCOMPLETE"
-    assert payload["measured"] is False
-    assert "budget" in payload["parse_problems"]
+    assert "error" not in payload
+    assert set(payload["files"]) == {"added", "removed", "modified"}
+    assert payload["score"] == 0
 
 
 def test_error_output_never_leaks_package_controlled_text(

@@ -22,6 +22,7 @@ here is claimed to have run on a real runner yet.
 | Input | Source |
 |---|---|
 | pkgwatch itself (action + package) | The pinned pkgwatch action ref (`GITHUB_ACTION_PATH`) |
+| Invocation | `python -m pkgwatch` via `action.yml` |
 | old lockfile (`--old`) | Base branch |
 | new lockfile (`--new`) | PR head (the workspace root) |
 | config (`.pkgwatch.toml`) | Base branch, when it already exists there |
@@ -45,6 +46,9 @@ The action exits with pkgwatch's exit code, so the job fails accordingly:
 | `0` | No findings at or above `--fail-on` | pass |
 | `1` | Findings at or above `--fail-on` | fail, report in the summary |
 | `2` | Error or incomplete analysis | fail, report in the summary |
+
+SIGINT exits `130` and a closed stdout pipe exits `0`; the action invokes `python -m
+pkgwatch`, so both come from the shared `main()` wrapper. Neither is an analysis verdict.
 
 ## Report and comments
 

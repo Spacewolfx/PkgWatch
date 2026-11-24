@@ -8,6 +8,7 @@ dist/
 .ruff_cache/
 .hypothesis/
 # Local-only AI process artifacts: kept on disk, never published.
+.mimosa/
 özet.md
 docs/GATES-*.txt
 docs/superpowers/
